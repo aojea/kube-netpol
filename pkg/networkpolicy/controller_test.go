@@ -1,10 +1,9 @@
 package networkpolicy
 
 import (
-	"fmt"
-	"reflect"
 	"testing"
 
+	"github.com/florianl/go-nfqueue"
 	v1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,17 +13,6 @@ import (
 )
 
 var alwaysReady = func() bool { return true }
-
-type fakeReconciler struct {
-	Policy Policy
-}
-
-func (f fakeReconciler) Reconcile(name string, policy Policy) error {
-	if !reflect.DeepEqual(policy, f.Policy) {
-		return fmt.Errorf("policies doesn't match %+v %+v", policy, f.Policy)
-	}
-	return nil
-}
 
 type networkpolicyController struct {
 	*Controller
@@ -40,7 +28,7 @@ func newController() *networkpolicyController {
 		informersFactory.Networking().V1().NetworkPolicies(),
 		informersFactory.Core().V1().Namespaces(),
 		informersFactory.Core().V1().Pods(),
-		fakeReconciler{},
+		iptables.fake,
 	)
 	controller.networkpoliciesSynced = alwaysReady
 	controller.namespacesSynced = alwaysReady
@@ -61,7 +49,7 @@ func TestSyncNetworkPolicy(t *testing.T) {
 		networkpolicy  *networkingv1.NetworkPolicy
 		namespace      *v1.Namespace
 		pod            *v1.Pod
-		expectedPolicy *Policy
+		expectedAction nfqueue.Action
 	}{
 		{
 			name: "Default deny all traffic",
@@ -91,7 +79,7 @@ func TestSyncNetworkPolicy(t *testing.T) {
 			controller.namespaceStore.Add(tt.namespace)
 			controller.podStore.Add(tt.pod)
 
-			err := controller.syncNetworkPolicy(ns + "/" + npName)
+			err := controller.syncPacket(ns + "/" + npName)
 			if err != nil {
 				t.Errorf("syncServices error: %v", err)
 			}

@@ -3,11 +3,12 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
+	"log"
 	"os"
 	"os/signal"
 
 	"github.com/aojea/kube-netpol/pkg/networkpolicy"
+	"github.com/coreos/go-iptables/iptables"
 	"golang.org/x/sys/unix"
 
 	"k8s.io/client-go/informers"
@@ -15,13 +16,6 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 )
-
-type fakeReconciler struct{}
-
-func (f fakeReconciler) Reconcile(name string, policy networkpolicy.Policy) error {
-	fmt.Printf("Apply Network Policy %s %+v\n", name, policy)
-	return nil
-}
 
 func main() {
 	var kubeconfig string
@@ -57,16 +51,29 @@ func main() {
 
 	informersFactory := informers.NewSharedInformerFactory(clientset, 0)
 
+	// Install iptables rule to masquerade IPv4 NAT64 traffic
+	ipt4, err := iptables.NewWithProtocol(iptables.ProtocolIPv4)
+	if err != nil {
+		log.Fatalf("Could not use iptables IPv4: %v", err)
+	}
+
+	/* TODO make this configurable, it can be ipv4, ipv6 or dual
+	ipt6, err := iptables.NewWithProtocol(iptables.ProtocolIPv6)
+	if err != nil {
+		log.Fatalf("Could not use iptables IPv6: %v", err)
+	}
+	*/
+
 	networkPolicyController := networkpolicy.NewController(
 		clientset,
 		informersFactory.Networking().V1().NetworkPolicies(),
 		informersFactory.Core().V1().Namespaces(),
 		informersFactory.Core().V1().Pods(),
-		fakeReconciler{},
+		ipt4,
 	)
 
 	informersFactory.Start(ctx.Done())
-	go networkPolicyController.Run(1, ctx.Done())
+	go networkPolicyController.Run(ctx, 5)
 
 	select {
 	case <-signalCh:
