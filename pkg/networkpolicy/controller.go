@@ -279,21 +279,202 @@ func (c *Controller) syncPacket(key nfqueue.Attribute) error {
 	srcPort := "&key.Payload[8:10]"
 	dstIP := "&key.Payload[4:8]"
 	dstPort := "&key.Payload[10:12]"
+	protocol := v1.ProtocolTCP
 
+	// This uses the source IP and evaluate the policies in Egress
 	pods, err := c.getPodsAssignedToIP(srcIP)
 	if err != nil {
 		return err
 	}
+	// This is an external IP
+	if len(pods) == 0 {
+		goto INGRESS
+	}
+	// This is not expected
+	if len(pods) > 1 {
+		klog.Infof("unexpected number of pods %d", len(pods))
+	}
+	// Just guess and use the first Pod
+	// TODO: use the one that is running if there are multiple it can be possible one got reused
+	srcPod := pods[0]
+	// Get all the network policies that affect this pod
+	selector := labels.SelectorFromSet(labels.Set(map[string]string{
+		"kubernetes.io/metadata.name": srcPod.Namespace,
+	}))
+	networkPolices, err := c.networkpolicyLister.List(selector)
+	if err != nil {
+		return err
+	}
+
+	// verdict is true for accept the connection and false for deny
+	verdict := false
+	for _, netpol := range networkPolices {
+		// podSelector selects the pods to which this NetworkPolicy object applies.
+		// The array of ingress rules is applied to any pods selected by this field.
+		// Multiple network policies can select the same set of pods. In this case,
+		// the ingress rules for each are combined additively.
+		// This field is NOT optional and follows standard label selector semantics.
+		// An empty podSelector matches all pods in this namespace.
+		podSelector := labels.Everything()
+		if netpol.Spec.PodSelector != nil {
+			podSelector = netpol.Spec.PodSelector.String()
+		} 
+		s, err := labels.Parse(podSelector)
+		if err != nil {
+			return err
+		}
+		// networkPolicy does not selects the pod
+		if !s.Matches(labels.Set(srcPod.Labels)) {
+			continue
+		}
+		for _, policyType := range netpol.Spec.PolicyTypes {
+			// This is checking the traffic originated from the Pod
+			// PolicyTypeIngress does not apply here
+			if policyType == networkingv1.PolicyTypeIngress {
+				continue
+			}
+
+			if policyType == networkingv1.PolicyTypeEgress {
+				// egress is a list of egress rules to be applied to the selected pods. Outgoing traffic
+				// is allowed if there are no NetworkPolicies selecting the pod (and cluster policy
+				// otherwise allows the traffic), OR if the traffic matches at least one egress rule
+				// across all of the NetworkPolicy objects whose podSelector matches the pod. If
+				// this field is empty then this NetworkPolicy limits all outgoing traffic (and serves
+				// solely to ensure that the pods it selects are isolated by default).
+				if len(netpol.Spec.Egress) == 0 {
+					return c.nfq.SetVerdict(*key.PacketID, nfqueue.NfDrop)
+				}
+				for _, rule := range netpol.Spec.Egress {
+					// ports is a list of ports which should be made accessible on the pods selected for
+					// this rule. Each item in this list is combined using a logical OR. If this field is
+					// empty or missing, this rule matches all ports (traffic not restricted by port).
+					// If this field is present and contains at least one item, then this rule allows
+					// traffic only if the traffic matches at least one port in the list.
+					if len(rule.Ports) > 0 {
+						found := false
+						for _, port := range rule.Ports {
+							if protocol != *port.Protocol {
+								continue
+							}
+							// matches all ports
+							if port.Port == nil {
+								found = true
+								break
+							}
+							// TODO handle named ports
+							if dstPort == port.Port.String() {
+								found = true
+								break
+							}
+							// endPort indicates that the range of ports from port to endPort if set, inclusive,
+							// should be allowed by the policy. This field cannot be defined if the port field
+							// is not defined or if the port field is defined as a named (string) port.
+							// The endPort must be equal or greater than port.
+							if port.EndPort != nil && dstPort > port.Port && dstPort <= *port.EndPort {
+								found = true
+								break
+							}
+						}
+						if !found {
+							return c.nfq.SetVerdict(*key.PacketID, nfqueue.NfDrop)
+						}
+					}
+					// to is a list of destinations for outgoing traffic of pods selected for this rule.
+					// Items in this list are combined using a logical OR operation. If this field is
+					// empty or missing, this rule matches all destinations (traffic not restricted by
+					// destination). If this field is present and contains at least one item, this rule
+					// allows traffic only if the traffic matches at least one item in the to list.
+					if len(rule.To) == 0 {
+						goto INGRESS
+					}
+					for _, peer := range rule.To {
+						// IPBlock describes a particular CIDR (Ex. "192.168.1.0/24","2001:db8::/64") that is allowed
+						// to the pods matched by a NetworkPolicySpec's podSelector. The except entry describes CIDRs
+						// that should not be included within this rule.
+						if peer.IPBlock != nil {
+							// TODO check the destination IP is allowed
+							if ! dstIP is contained in IPBlock.CIDR {
+								return c.nfq.SetVerdict(*key.PacketID, nfqueue.NfDrop)
+							}
+
+							for _, cidr := range peer.IPBlock.Except {
+								if dstIP is contained in cidr {
+									return c.nfq.SetVerdict(*key.PacketID, nfqueue.NfDrop)
+								}
+							}
+							return c.nfq.SetVerdict(*key.PacketID, nfqueue.NfAccept)
+						}
+
+						// podSelector is a label selector which selects pods. This field follows standard label
+						// selector semantics; if present but empty, it selects all pods.
+						//
+						// If namespaceSelector is also set, then the NetworkPolicyPeer as a whole selects
+						// the pods matching podSelector in the Namespaces selected by NamespaceSelector.
+						// Otherwise it selects the pods matching podSelector in the policy's own namespace.
+						if peer.PodSelector == nil {
+``						return c.nfq.SetVerdict(*key.PacketID, nfqueue.NfDrop)
+						}
+						podSelector := labels.Everything()
+						if len(peer.PodSelector) != 0 {
+								podSelector = peer.PodSelector.String()
+						}
+						namespaces := []string{netpol.Namespace}
+						// namespaceSelector selects namespaces using cluster-scoped labels. This field follows
+						// standard label selector semantics; if present but empty, it selects all namespaces.
+						//
+						// If podSelector is also set, then the NetworkPolicyPeer as a whole selects
+						// the pods matching podSelector in the namespaces selected by namespaceSelector.
+						// Otherwise it selects all pods in the namespaces selected by namespaceSelector.
+						if peer.NamespaceSelector != nil {
+							nsSelector := labels.Everything()
+							if len(peer.NamespaceSelector) != 0 {
+								nsSelector = peer.NamespaceSelector.String()
+							}
+							list, err := c.namespaceLister.List(nsSelector)
+							if err != nil {
+								return err
+							}
+							namespaces := []string{}
+							for _, ns := range list {
+								namespaces = append(namespaces, ns.Name)
+							}
+						} 
+
+						if dstPod not in Namespaces {
+							drop
+						}
+
+						if dstPod not match pod selector {
+							drop
+						}
+
+
+					}
+
+				}
+			}
+		}
+	}
+	INGRESS: 
+	// This uses the source IP and evaluate the policies in Egress
+	pods, err = c.getPodsAssignedToIP(dstIP)
+	if err != nil {
+		return err
+	}
+	// This is an external IP so no network policies apply
 	if len(pods) == 0 {
 		return nil
 	}
+	// This is not expected
 	if len(pods) > 1 {
 		klog.Infof("unexpected number of pods %d", len(pods))
-		return nil
 	}
-	pod := pods[0]
+	// Just guess and use the first Pod
+	// TODO: use the one that is running if there are multiple it can be possible one got reused
+	dstPod := pods[0]
+	// Get all the network policies that affect this pod
 	selector := labels.SelectorFromSet(labels.Set(map[string]string{
-		"kubernetes.io/metadata.name": pod.Namespace,
+		"kubernetes.io/metadata.name": dstPod.Namespace,
 	}))
 	networkPolices, err := c.networkpolicyLister.List(selector)
 	if err != nil {
@@ -305,26 +486,72 @@ func (c *Controller) syncPacket(key nfqueue.Attribute) error {
 		if err != nil {
 			return err
 		}
-		if !s.Matches(labels.Set(pod.Labels)) {
+		// networkPolicy does not selects the pod
+		if !s.Matches(labels.Set(dstPod.Labels)) {
 			continue
 		}
 		for _, policyType := range netpol.Spec.PolicyTypes {
+			// This is checking the traffic destined to the Pod
+			// PolicyTypeEgress does not apply here
 			if policyType == networkingv1.PolicyTypeEgress {
-				// Deny all
-				if len(netpol.Spec.Egress) == 0 {
-					c.nfq.SetVerdict(*key.PacketID, nfqueue.NfDrop)
-					return nil
-				}
+				continue
 			}
-			if policyType == networkingv1.PolicyTypeIngress {
-				// Deny all
-				if len(netpol.Spec.Ingress) == 0 {
-					c.nfq.SetVerdict(*key.PacketID, nfqueue.NfDrop)
-					return nil
-				}
-			}
-		}
 
+			if policyType == networkingv1.PolicyTypeIngress {
+							// ingress is a list of ingress rules to be applied to the selected pods.
+							// Traffic is allowed to a pod if there are no NetworkPolicies selecting the pod
+							// (and cluster policy otherwise allows the traffic), OR if the traffic source is
+							// the pod's local node, OR if the traffic matches at least one ingress rule
+							// across all of the NetworkPolicy objects whose podSelector matches the pod. If
+							// this field is empty then this NetworkPolicy does not allow any traffic (and serves
+							// solely to ensure that the pods it selects are isolated by default)
+							if len(netpol.Spec.Ingress) == 0 {
+								return c.nfq.SetVerdict(*key.PacketID, nfqueue.NfDrop)
+							}
+							for _, rule := range netpol.Spec.Ingress {
+								// if there are ports defined they must match
+								// otherwise no ports means all ports are allowed
+								if len(rule.Ports) > 0 {
+									found := false
+									for _, port := range rule.Ports {
+										if protocol != *port.Protocol {
+											continue
+										}
+										// matches all ports
+										if port.Port == nil {
+											found = true
+											break
+										}
+										// TODO handle named ports
+										if dstPort == port.Port.String() {
+											found = true
+											break
+										}
+										// port ranges
+										if port.EndPort != nil && dstPort > port.Port && dstPort <= *port.EndPort {
+											found = true
+											break
+										}
+									}
+									if !found {
+										return c.nfq.SetVerdict(*key.PacketID, nfqueue.NfDrop)
+									}
+								}
+								// from is a list of sources which should be able to access the pods selected for this rule.
+								// Items in this list are combined using a logical OR operation. If this field is
+								// empty or missing, this rule matches all sources (traffic not restricted by
+								// source). If this field is present and contains at least one item, this rule
+								// allows traffic only if the traffic matches at least one item in the from list.
+								if len(rule.From) == 0 {
+									return c.nfq.SetVerdict(*key.PacketID, nfqueue.NfAccept)
+								}
+								for _, peer := range rule.From {
+									
+			
+								}
+			
+							}			
+			}
 	}
 	return nil
 }
