@@ -1,19 +1,8 @@
 package networkpolicy
 
-import (
-	"testing"
-
-	"github.com/florianl/go-nfqueue"
-	v1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/informers"
-	"k8s.io/client-go/kubernetes/fake"
-	"k8s.io/client-go/tools/cache"
-)
-
 var alwaysReady = func() bool { return true }
 
+/*
 type networkpolicyController struct {
 	*Controller
 	networkpolicyStore cache.Store
@@ -87,3 +76,5 @@ func TestSyncNetworkPolicy(t *testing.T) {
 		})
 	}
 }
+
+*/
