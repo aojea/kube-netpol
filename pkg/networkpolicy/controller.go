@@ -204,7 +204,7 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 
 	nf, err := nfqueue.Open(&config)
 	if err != nil {
-		klog.Infof("could not open nfqueue socket:", err)
+		klog.Infof("could not open nfqueue socket: %v", err)
 		return err
 	}
 	defer nf.Close()
@@ -212,7 +212,6 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 	c.nfq = nf
 
 	fn := func(a nfqueue.Attribute) int {
-		klog.V(4).Infof("Processing packet %+v", (*a.Payload)[:40])
 		c.queue.Add(a)
 		return 0
 	}
@@ -250,11 +249,11 @@ func (c *Controller) syncIptablesRules() {
 }
 
 func (c *Controller) cleanIptablesRules() {
-	if err := c.ipt.Delete("filter", "FORWARD", "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-balance", "0:5", "--queue-cpu-fanout"); err != nil {
+	if err := c.ipt.Delete("filter", "FORWARD", "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", "100"); err != nil {
 		klog.Infof("error syncing iptables rule %v", err)
 	}
 
-	if err := c.ipt.Delete("filter", "OUTPUT", "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-balance", "0:5", "--queue-cpu-fanout"); err != nil {
+	if err := c.ipt.Delete("filter", "OUTPUT", "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", "100"); err != nil {
 		klog.Infof("error syncing iptables rule %v", err)
 	}
 }
@@ -319,7 +318,7 @@ func (c *Controller) syncPacket(key nfqueue.Attribute) error {
 		klog.V(0).Infof("Finished syncing packet %d took %v", *key.PacketID, time.Since(startTime))
 	}()
 
-	klog.V(0).Infof("Processing packet %s", packet)
+	klog.V(2).Infof("Processing packet %s", packet)
 
 	// If no network policies apply traffic is accepted by default
 	verdict := true
