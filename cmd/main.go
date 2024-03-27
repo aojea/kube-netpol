@@ -17,6 +17,8 @@ import (
 )
 
 func main() {
+	// enable logging
+	klog.InitFlags(nil)
 	// creates the in-cluster config
 	config, err := rest.InClusterConfig()
 	if err != nil {
