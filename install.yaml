@@ -67,6 +67,10 @@ spec:
       containers:
       - name: kube-netpol
         image: aojea/kube-netpol:v0.1.0
+        args:
+        - /bin/netpol
+        - -v
+        - "4"
         volumeMounts:
         - name: xtables-lock
           mountPath: /run/xtables.lock
