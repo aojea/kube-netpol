@@ -2,6 +2,7 @@ package networkpolicy
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"net"
 	"net/http"
@@ -179,10 +180,12 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 		return fmt.Errorf("error syncing cache")
 	}
 
-	prometheus.Register(histogramVec)
+	// add metrics
+	prometheus.MustRegister(histogramVec)
+	prometheus.MustRegister(packetCounterVec)
 
 	http.Handle("/metrics", promhttp.Handler())
-	http.ListenAndServe(":9080", nil)
+	go http.ListenAndServe(":9080", nil)
 
 	// Start the workers after the repair loop to avoid races
 	klog.Info("Syncing iptables rules")
@@ -193,7 +196,7 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 	// Set configuration options for nfqueue
 	config := nfqueue.Config{
 		NfQueue:      100,
-		MaxPacketLen: 0xFFFF, // only interested in the headers
+		MaxPacketLen: 128, // only interested in the headers
 		MaxQueueLen:  255,
 		Copymode:     nfqueue.NfQnlCopyPacket, // headers
 		WriteTimeout: 15 * time.Millisecond,
@@ -209,8 +212,7 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 	c.nfq = nf
 
 	fn := func(a nfqueue.Attribute) int {
-		klog.V(0).Infof("Processing packet %+v", (*a.Payload)[:40])
-		packetCounterVec.WithLabelValues("proto").Inc()
+		klog.V(4).Infof("Processing packet %+v", (*a.Payload)[:40])
 		c.queue.Add(a)
 		return 0
 	}
@@ -290,7 +292,7 @@ func (c *Controller) handleErr(err error, key nfqueue.Attribute) {
 		return
 	}
 
-	klog.Warningf("Dropping packet %q out of the queue: %v", key, err)
+	klog.Warningf("Dropping packet %v out of the queue: %v", key, err)
 	// TODO drop or accept???
 	c.nfq.SetVerdict(*key.PacketID, nfqueue.NfDrop)
 	c.queue.Forget(key)
@@ -300,17 +302,24 @@ func (c *Controller) handleErr(err error, key nfqueue.Attribute) {
 func (c *Controller) syncPacket(key nfqueue.Attribute) error {
 	startTime := time.Now()
 	klog.Infof("Processing sync for packet %d", *key.PacketID)
+	packet, err := parsePacket(*key.Payload)
+	if err != nil {
+		klog.Infof("Can not process packet %d accepting it: %v", *key.PacketID, err)
+		return c.nfq.SetVerdict(*key.PacketID, nfqueue.NfAccept)
+	}
+	srcIP := packet.srcIP
+	srcPort := packet.srcPort
+	dstIP := packet.dstIP
+	dstPort := packet.dstPort
+	protocol := packet.proto
 
 	defer func() {
-		histogramVec.WithLabelValues("proto").Observe(float64(time.Since(startTime).Milliseconds()))
-		klog.V(4).Infof("Finished syncing packet %d took %v", *key.PacketID, time.Since(startTime))
+		histogramVec.WithLabelValues(string(protocol)).Observe(float64(time.Since(startTime).Milliseconds()))
+		packetCounterVec.WithLabelValues(string(protocol)).Inc()
+		klog.V(0).Infof("Finished syncing packet %d took %v", *key.PacketID, time.Since(startTime))
 	}()
 
-	srcIP := net.ParseIP("11.1.1.1") // "&key.Payload[0:4]"
-	srcPort := 80                    // "&key.Payload[8:10]"
-	dstIP := net.ParseIP("11.1.1.1") // "&key.Payload[4:8]"
-	dstPort := 8080                  // "&key.Payload[10:12]"
-	protocol := v1.ProtocolTCP
+	klog.V(0).Infof("Processing packet %s", packet)
 
 	// If no network policies apply traffic is accepted by default
 	verdict := true
@@ -708,4 +717,68 @@ END:
 		return c.nfq.SetVerdict(*key.PacketID, nfqueue.NfAccept)
 	}
 	return c.nfq.SetVerdict(*key.PacketID, nfqueue.NfDrop)
+}
+
+type tuple struct {
+	srcIP   net.IP
+	dstIP   net.IP
+	srcPort int
+	dstPort int
+	proto   v1.Protocol
+}
+
+func (t tuple) String() string {
+	return fmt.Sprintf("%s:%d %s:%d %s", t.srcIP.String(), t.srcPort, t.dstIP.String(), t.dstPort, t.proto)
+}
+
+// https://en.wikipedia.org/wiki/Internet_Protocol_version_4#Packet_structure
+// https://en.wikipedia.org/wiki/IPv6_packet
+// https://github.com/golang/net/blob/master/ipv4/header.go
+func parsePacket(b []byte) (tuple, error) {
+	t := tuple{}
+	if b == nil {
+		return t, fmt.Errorf("empty payload")
+	}
+	version := int(b[0] >> 4)
+	// initialize variables
+	hdrlen := -1
+	protocol := -1
+	switch version {
+	case 4:
+		hdrlen = int(b[0]&0x0f) << 2
+		if len(b) < hdrlen+4 {
+			return t, fmt.Errorf("payload to short, received %d expected at least %d", len(b), hdrlen+4)
+		}
+		t.srcIP = net.IPv4(b[12], b[13], b[14], b[15])
+		t.dstIP = net.IPv4(b[16], b[17], b[18], b[19])
+		protocol = int(b[9])
+	case 6:
+		hdrlen = 40
+		if len(b) < hdrlen+4 {
+			return t, fmt.Errorf("payload to short, received %d expected at least %d", len(b), hdrlen+4)
+		}
+		t.srcIP = make(net.IP, net.IPv6len)
+		copy(t.srcIP, b[8:24])
+		t.dstIP = make(net.IP, net.IPv6len)
+		copy(t.dstIP, b[24:40])
+		// NextHeader (not extension headers supported)
+		protocol = int(b[6])
+	default:
+		return t, fmt.Errorf("unknown versions %d", version)
+	}
+
+	switch protocol {
+	case 6:
+		t.proto = v1.ProtocolTCP
+	case 17:
+		t.proto = v1.ProtocolUDP
+	case 132:
+		t.proto = v1.ProtocolSCTP
+	default:
+		return t, fmt.Errorf("unknown protocol %d", protocol)
+	}
+	// TCP, UDP and SCTP srcPort and dstPort are the first 4 bytes after the IP header
+	t.srcPort = int(binary.BigEndian.Uint16(b[hdrlen : hdrlen+2]))
+	t.dstPort = int(binary.BigEndian.Uint16(b[hdrlen+2 : hdrlen+4]))
+	return t, nil
 }
