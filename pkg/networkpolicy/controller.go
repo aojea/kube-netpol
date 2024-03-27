@@ -60,7 +60,7 @@ const (
 var (
 	histogramVec = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: "packet_process_time",
-		Help: "Time it has taken to process each packet",
+		Help: "Time it has taken to process each packet (microseconds)",
 	}, []string{"protocol"})
 
 	packetCounterVec = prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -314,7 +314,7 @@ func (c *Controller) syncPacket(key nfqueue.Attribute) error {
 	protocol := packet.proto
 
 	defer func() {
-		histogramVec.WithLabelValues(string(protocol)).Observe(float64(time.Since(startTime).Milliseconds()))
+		histogramVec.WithLabelValues(string(protocol)).Observe(float64(time.Since(startTime).Microseconds()))
 		packetCounterVec.WithLabelValues(string(protocol)).Inc()
 		klog.V(0).Infof("Finished syncing packet %d took %v", *key.PacketID, time.Since(startTime))
 	}()
