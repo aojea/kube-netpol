@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/coreos/go-iptables/iptables"
@@ -55,13 +56,23 @@ var (
 	histogramVec = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: "packet_process_time",
 		Help: "Time it has taken to process each packet (microseconds)",
-	}, []string{"protocol"})
+	}, []string{"protocol", "family"})
 
 	packetCounterVec = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "packet_count",
 		Help: "Number of packets",
-	}, []string{"protocol"})
+	}, []string{"protocol", "family"})
 )
+
+var registerMetricsOnce sync.Once
+
+// RegisterMetrics registers kube-proxy metrics.
+func registerMetrics() {
+	registerMetricsOnce.Do(func() {
+		prometheus.Register(histogramVec)
+		prometheus.Register(packetCounterVec)
+	})
+}
 
 // NewController returns a new *Controller.
 func NewController(client clientset.Interface,
@@ -176,8 +187,7 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 	}
 
 	// add metrics
-	prometheus.MustRegister(histogramVec)
-	prometheus.MustRegister(packetCounterVec)
+	registerMetrics()
 
 	http.Handle("/metrics", promhttp.Handler())
 	go http.ListenAndServe(":9080", nil)
@@ -223,8 +233,8 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 		} else {
 			c.nfq.SetVerdict(*a.PacketID, nfqueue.NfDrop)
 		}
-		histogramVec.WithLabelValues(string(packet.proto)).Observe(float64(time.Since(startTime).Microseconds()))
-		packetCounterVec.WithLabelValues(string(packet.proto)).Inc()
+		histogramVec.WithLabelValues(string(packet.proto), string(c.ipt.Proto())).Observe(float64(time.Since(startTime).Microseconds()))
+		packetCounterVec.WithLabelValues(string(packet.proto), string(c.ipt.Proto())).Inc()
 		klog.V(0).Infof("Finished syncing packet %d took %v result %v", *a.PacketID, time.Since(startTime), verdict)
 		return 0
 	}
