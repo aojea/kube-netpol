@@ -279,11 +279,7 @@ func (c *Controller) getNetworkPoliciesForPod(pod *v1.Pod) []*networkingv1.Netwo
 		return nil
 	}
 	// Get all the network policies that affect this pod
-	selector := labels.SelectorFromSet(labels.Set(map[string]string{
-		"kubernetes.io/metadata.name": pod.Namespace,
-	}))
-
-	networkPolices, err := c.networkpolicyLister.List(selector)
+	networkPolices, err := c.networkpolicyLister.NetworkPolicies(pod.Namespace).List(labels.Everything())
 	if err != nil {
 		return nil
 	}
@@ -298,11 +294,18 @@ func (c *Controller) acceptPacket(p packet) bool {
 	dstPod := c.getPodAssignedToIP(dstIP.String())
 	dstPort := p.dstPort
 	protocol := p.proto
-
-	klog.V(0).Infof("syncing packet %s SrcPod %+v DstPod %+v", p.String(), srcPod, dstPod)
-
 	srcPodNetworkPolices := c.getNetworkPoliciesForPod(srcPod)
 	dstPodNetworkPolices := c.getNetworkPoliciesForPod(dstPod)
+
+	msg := fmt.Sprintf("checking packet %s\n", p.String())
+	if srcPod != nil {
+		msg = msg + fmt.Sprintf("\tSrcPod (%s/%s) %d network policies\n", srcPod.Name, srcPod.Namespace, len(srcPodNetworkPolices))
+	}
+	if dstPod != nil {
+		msg = msg + fmt.Sprintf("\tDstPod (%s/%s) %d network policies\n", dstPod.Name, dstPod.Namespace, len(dstPodNetworkPolices))
+	}
+	klog.V(2).Infof("%s", msg)
+
 	// For a connection from a source pod to a destination pod to be allowed,
 	// both the egress policy on the source pod and the ingress policy on the
 	// destination pod need to allow the connection.
@@ -311,15 +314,15 @@ func (c *Controller) acceptPacket(p packet) bool {
 	// This is the first packet originated from srcPod so we need to check:
 	// 1. srcPod egress is accepted
 	// 2. dstPod ingress is accepted
-	return c.validator(srcPodNetworkPolices, networkingv1.PolicyTypeEgress, srcPod, srcPort, dstPod, dstPort, protocol) &&
-		c.validator(dstPodNetworkPolices, networkingv1.PolicyTypeIngress, dstPod, dstPort, srcPod, srcPort, protocol)
+	return c.validator(srcPodNetworkPolices, networkingv1.PolicyTypeEgress, srcPod, srcIP, srcPort, dstPod, dstIP, dstPort, protocol) &&
+		c.validator(dstPodNetworkPolices, networkingv1.PolicyTypeIngress, dstPod, dstIP, dstPort, srcPod, srcIP, srcPort, protocol)
 }
 
 // validator obtains a verdict for network policies that applies to a src Pod in the direction
 // passed as parameter
 func (c *Controller) validator(
 	networkPolicies []*networkingv1.NetworkPolicy, networkPolictType networkingv1.PolicyType,
-	srcPod *v1.Pod, srcPort int, dstPod *v1.Pod, dstPort int, proto v1.Protocol) bool {
+	srcPod *v1.Pod, srcIP net.IP, srcPort int, dstPod *v1.Pod, dstIP net.IP, dstPort int, proto v1.Protocol) bool {
 	verdict := true
 	for _, netpol := range networkPolicies {
 		// podSelector selects the pods to which this NetworkPolicy object applies.
@@ -335,6 +338,7 @@ func (c *Controller) validator(
 		}
 		// networkPolicy does not selects the pod try the next network policy
 		if !podSelector.Matches(labels.Set(srcPod.Labels)) {
+			klog.V(2).Infof("Pod %s/%s does not match NetworkPolicy %s/%s", srcPod.Name, srcPod.Namespace, netpol.Name, netpol.Namespace)
 			continue
 		}
 
@@ -351,6 +355,7 @@ func (c *Controller) validator(
 				// this field is empty then this NetworkPolicy limits all outgoing traffic (and serves
 				// solely to ensure that the pods it selects are isolated by default).
 				if len(netpol.Spec.Egress) == 0 {
+					klog.V(2).Infof("Pod %s/%s has limited all egress traffic by NetworkPolicy %s/%s", srcPod.Name, srcPod.Namespace, netpol.Name, netpol.Namespace)
 					verdict = false
 					continue
 				}
@@ -358,6 +363,7 @@ func (c *Controller) validator(
 					if len(rule.Ports) != 0 {
 						ok := c.validatePorts(rule.Ports, dstPod, dstPort, proto)
 						if !ok {
+							klog.V(2).Infof("Pod %s/%s is not allowed to connect to port %d by NetworkPolicy %s/%s", srcPod.Name, srcPod.Namespace, dstPort, netpol.Name, netpol.Namespace)
 							verdict = false
 							continue
 						}
@@ -368,6 +374,7 @@ func (c *Controller) validator(
 					// destination). If this field is present and contains at least one item, this rule
 					// allows traffic only if the traffic matches at least one item in the to list.
 					if len(rule.To) == 0 {
+						klog.V(2).Infof("Pod %s/%s is allowed to connect to any destination on NetworkPolicy %s/%s", srcPod.Name, srcPod.Namespace, netpol.Name, netpol.Namespace)
 						return true
 					}
 					for _, peer := range rule.To {
@@ -375,7 +382,8 @@ func (c *Controller) validator(
 						// to the pods matched by a NetworkPolicySpec's podSelector. The except entry describes CIDRs
 						// that should not be included within this rule.
 						if peer.IPBlock != nil {
-							if c.validateIPBlocks(peer.IPBlock, dstPod) {
+							if c.validateIPBlocks(peer.IPBlock, dstIP) {
+								klog.V(2).Infof("Pod %s/%s is allowed to connect to %s on NetworkPolicy %s/%s", srcPod.Name, srcPod.Namespace, dstIP, netpol.Name, netpol.Namespace)
 								return true
 							} else {
 								verdict = false
@@ -383,6 +391,9 @@ func (c *Controller) validator(
 							}
 						}
 
+						if dstPod == nil {
+							continue
+						}
 						// podSelector is a label selector which selects pods. This field follows standard label
 						// selector semantics; if present but empty, it selects all pods.
 						//
@@ -397,10 +408,12 @@ func (c *Controller) validator(
 						// networkPolicy does not selects the pod
 						// try the next network policy
 						if !podSelector.Matches(labels.Set(dstPod.Labels)) {
+							klog.V(2).Infof("Pod %s/%s is not allowed to connect from %s/%s on NetworkPolicy %s/%s", dstPod.Name, dstPod.Namespace, srcPod.Name, srcPod.Namespace, netpol.Name, netpol.Namespace)
 							verdict = false
 							continue
 						}
 						if peer.NamespaceSelector == nil && dstPod.Namespace == netpol.Namespace {
+							klog.V(2).Infof("Pod %s/%s is allowed to connect from %s/%s on NetworkPolicy %s/%s", dstPod.Name, dstPod.Namespace, srcPod.Name, srcPod.Namespace, netpol.Name, netpol.Namespace)
 							return true
 						}
 						// namespaceSelector selects namespaces using cluster-scoped labels. This field follows
@@ -415,6 +428,7 @@ func (c *Controller) validator(
 							return true
 						}
 						if nsSelector == labels.Everything() {
+							klog.V(2).Infof("Pod %s/%s is allowed to connect from %s/%s on NetworkPolicy %s/%s", dstPod.Name, dstPod.Namespace, srcPod.Name, srcPod.Namespace, netpol.Name, netpol.Namespace)
 							return true
 						}
 						namespaces, err := c.namespaceLister.List(nsSelector)
@@ -424,9 +438,11 @@ func (c *Controller) validator(
 						}
 						for _, ns := range namespaces {
 							if dstPod.Namespace == ns.Name {
+								klog.V(2).Infof("Pod %s/%s is allowed to connect from %s/%s on NetworkPolicy %s/%s", dstPod.Name, dstPod.Namespace, srcPod.Name, srcPod.Namespace, netpol.Name, netpol.Namespace)
 								return true
 							}
 						}
+						klog.V(2).Infof("Pod %s/%s is not allowed to connect from %s/%s on NetworkPolicy %s/%s", dstPod.Name, dstPod.Namespace, srcPod.Name, srcPod.Namespace, netpol.Name, netpol.Namespace)
 						verdict = false
 						continue
 					}
@@ -449,6 +465,7 @@ func (c *Controller) validator(
 					if len(rule.Ports) != 0 {
 						ok := c.validatePorts(rule.Ports, srcPod, srcPort, proto)
 						if !ok {
+							klog.V(2).Infof("Pod %s/%s is not allowed to connect from port %d by NetworkPolicy %s/%s", dstPod.Name, dstPod.Namespace, srcPort, netpol.Name, netpol.Namespace)
 							verdict = false
 							continue
 						}
@@ -459,6 +476,7 @@ func (c *Controller) validator(
 					// destination). If this field is present and contains at least one item, this rule
 					// allows traffic only if the traffic matches at least one item in the to list.
 					if len(rule.From) == 0 {
+						klog.V(2).Infof("Pod %s/%s is allowed to connect from any destination on NetworkPolicy %s/%s", dstPod.Name, dstPod.Namespace, netpol.Name, netpol.Namespace)
 						return true
 					}
 					for _, peer := range rule.From {
@@ -466,14 +484,17 @@ func (c *Controller) validator(
 						// to the pods matched by a NetworkPolicySpec's podSelector. The except entry describes CIDRs
 						// that should not be included within this rule.
 						if peer.IPBlock != nil {
-							if c.validateIPBlocks(peer.IPBlock, dstPod) {
+							if c.validateIPBlocks(peer.IPBlock, srcIP) {
+								klog.V(2).Infof("Pod %s/%s is allowed to connect from %s on NetworkPolicy %s/%s", dstPod.Name, dstPod.Namespace, srcIP, netpol.Name, netpol.Namespace)
 								return true
 							} else {
 								verdict = false
 								continue
 							}
 						}
-
+						if dstPod == nil {
+							continue
+						}
 						// podSelector is a label selector which selects pods. This field follows standard label
 						// selector semantics; if present but empty, it selects all pods.
 						//
@@ -528,11 +549,7 @@ func (c *Controller) validator(
 	return verdict
 }
 
-func (c *Controller) validateIPBlocks(ipBlock *networkingv1.IPBlock, pod *v1.Pod) bool {
-	// ports is a list of ports,  each item in this list is combined using a logical OR.
-	// If this field is empty or missing, this rule matches all ports (traffic not restricted by port).
-	// If this field is present and contains at least one item, then this rule allows
-	// traffic only if the traffic matches at least one port in the list.
+func (c *Controller) validateIPBlocks(ipBlock *networkingv1.IPBlock, ip net.IP) bool {
 	if ipBlock == nil {
 		return true
 	}
@@ -542,30 +559,21 @@ func (c *Controller) validateIPBlocks(ipBlock *networkingv1.IPBlock, pod *v1.Pod
 		return true
 	}
 
-	for _, podIP := range pod.Status.PodIPs {
-		// get the IP of the same IP family
-		ip := net.ParseIP(podIP.String())
-		if (cidr.IP.To4() == nil) != (ip.To4() == nil) {
-			continue
-		}
+	if !cidr.Contains(ip) {
+		return false
+	}
 
-		if !cidr.Contains(ip) {
+	for _, except := range ipBlock.Except {
+		_, cidr, err := net.ParseCIDR(except)
+		if err != nil { // this has been validated by the API
+			return true
+		}
+		if cidr.Contains(ip) {
 			return false
 		}
-
-		for _, except := range ipBlock.Except {
-			_, cidr, err := net.ParseCIDR(except)
-			if err != nil { // this has been validated by the API
-				return true
-			}
-			if cidr.Contains(ip) {
-				return false
-			}
-		}
-		// it matched the cidr and didn't match the exceptions
-		return true
 	}
-	return false
+	// it matched the cidr and didn't match the exceptions
+	return true
 }
 
 func (c *Controller) validatePorts(networkPolicyPorts []networkingv1.NetworkPolicyPort, pod *v1.Pod, port int, protocol v1.Protocol) bool {
@@ -588,7 +596,7 @@ func (c *Controller) validatePorts(networkPolicyPorts []networkingv1.NetworkPoli
 		if port == policyPort.Port.IntValue() {
 			return true
 		}
-		if policyPort.Port.StrVal != "" {
+		if pod != nil && policyPort.Port.StrVal != "" {
 			for _, container := range pod.Spec.Containers {
 				for _, p := range container.Ports {
 					if p.Name == policyPort.Port.StrVal &&

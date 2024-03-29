@@ -13,24 +13,18 @@ import (
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/component-base/logs"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 )
 
-func makeValidNetworkPolicy() *networkingv1.NetworkPolicy {
-	return &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: "foo", Namespace: "bar"},
-		Spec: networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{
-				MatchLabels: map[string]string{"a": "b"},
-			},
-		},
-	}
-}
-
 type netpolTweak func(networkPolicy *networkingv1.NetworkPolicy)
 
-func makeNetworkPolicyCustom(tweaks ...netpolTweak) *networkingv1.NetworkPolicy {
-	networkPolicy := makeValidNetworkPolicy()
+func makeNetworkPolicyCustom(name, ns string, tweaks ...netpolTweak) *networkingv1.NetworkPolicy {
+	networkPolicy := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		Spec:       networkingv1.NetworkPolicySpec{},
+	}
 	for _, fn := range tweaks {
 		fn(networkPolicy)
 	}
@@ -128,6 +122,19 @@ func newController() *networkpolicyController {
 }
 
 func TestSyncPacket(t *testing.T) {
+	logs.GlogSetter("4")
+	state := klog.CaptureState()
+	t.Cleanup(state.Restore)
+
+	podA := makePod("a", "foo", "192.168.1.11")
+	podB := makePod("b", "bar", "192.168.2.22")
+
+	npDefaultDenyIngress := makeNetworkPolicyCustom("default-deny-ingress", "bar",
+		func(networkPolicy *networkingv1.NetworkPolicy) {
+			networkPolicy.Spec.PodSelector = metav1.LabelSelector{}
+			networkPolicy.Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}
+		})
+
 	tests := []struct {
 		name          string
 		networkpolicy []*networkingv1.NetworkPolicy
@@ -137,10 +144,10 @@ func TestSyncPacket(t *testing.T) {
 		expect        bool
 	}{
 		{
-			name:          "no network policies",
-			networkpolicy: []*networkingv1.NetworkPolicy{makeValidNetworkPolicy()},
-			namespace:     []*v1.Namespace{makeNamespace("a"), makeNamespace("b")},
-			pod:           []*v1.Pod{makePod("a", "a", "192.168.1.11")},
+			name:          "matching network policies",
+			networkpolicy: []*networkingv1.NetworkPolicy{npDefaultDenyIngress},
+			namespace:     []*v1.Namespace{makeNamespace("foo"), makeNamespace("bar")},
+			pod:           []*v1.Pod{podA, podB},
 			p: packet{
 				srcIP:   net.ParseIP("192.168.1.11"),
 				srcPort: 52345,
@@ -148,7 +155,7 @@ func TestSyncPacket(t *testing.T) {
 				dstPort: 80,
 				proto:   v1.ProtocolTCP,
 			},
-			expect: true,
+			expect: false,
 		},
 	}
 
