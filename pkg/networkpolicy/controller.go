@@ -48,6 +48,7 @@ import (
 
 const (
 	controllerName = "kube-netpol"
+	podIPIndex     = "podIPKeyIndex"
 )
 
 var (
@@ -82,7 +83,7 @@ func NewController(client clientset.Interface,
 
 	// TODO handle dual stack
 	podInformer.Informer().AddIndexers(cache.Indexers{
-		"podIPKeyIndex": func(obj interface{}) ([]string, error) {
+		podIPIndex: func(obj interface{}) ([]string, error) {
 			pod, ok := obj.(*v1.Pod)
 			if !ok {
 				return []string{}, nil
@@ -94,7 +95,7 @@ func NewController(client clientset.Interface,
 			}
 			result := []string{}
 			for _, ip := range pod.Status.PodIPs {
-				result = append(result, ip.String())
+				result = append(result, string(ip.IP))
 			}
 			return result, nil
 		},
@@ -103,7 +104,7 @@ func NewController(client clientset.Interface,
 	podIndexer := podInformer.Informer().GetIndexer()
 	// Theoretically only one IP can be active at a time
 	c.getPodAssignedToIP = func(podIP string) *v1.Pod {
-		objs, err := podIndexer.ByIndex("podIPKeyIndex", podIP)
+		objs, err := podIndexer.ByIndex(podIPIndex, podIP)
 		if err != nil {
 			return nil
 		}
