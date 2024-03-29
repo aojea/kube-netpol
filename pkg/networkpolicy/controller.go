@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
-	"net/http"
 	"sync"
 	"time"
 
@@ -13,7 +12,6 @@ import (
 	nfqueue "github.com/florianl/go-nfqueue"
 	"github.com/mdlayher/netlink"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	v1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -188,9 +186,6 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 
 	// add metrics
 	registerMetrics()
-
-	http.Handle("/metrics", promhttp.Handler())
-	go http.ListenAndServe(":9080", nil)
 
 	// Start the workers after the repair loop to avoid races
 	klog.Info("Syncing iptables rules")

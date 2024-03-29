@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"flag"
+	"net/http"
 	"os"
 	"os/signal"
 
 	"github.com/aojea/kube-netpol/pkg/networkpolicy"
 	"github.com/coreos/go-iptables/iptables"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sys/unix"
 
 	"k8s.io/client-go/informers"
@@ -44,6 +46,9 @@ func main() {
 	signal.Notify(signalCh, os.Interrupt, unix.SIGINT)
 
 	informersFactory := informers.NewSharedInformerFactory(clientset, 0)
+
+	http.Handle("/metrics", promhttp.Handler())
+	go http.ListenAndServe(":9080", nil)
 
 	// Install iptables rule to masquerade IPv4 NAT64 traffic
 	ipt4, err := iptables.NewWithProtocol(iptables.ProtocolIPv4)
