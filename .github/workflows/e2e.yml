@@ -23,7 +23,7 @@ permissions: write-all
 jobs:
   build:
     name: build
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
     - name: Set up Go
       uses: actions/setup-go@v2
@@ -93,7 +93,7 @@ jobs:
         kind: Cluster
         apiVersion: kind.x-k8s.io/v1alpha4
         networking:
-          ipFamily: ipv6
+          ipFamily: ipv4
         nodes:
         - role: control-plane
         - role: worker
