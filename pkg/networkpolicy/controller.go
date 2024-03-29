@@ -201,9 +201,9 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 	config := nfqueue.Config{
 		NfQueue:      uint16(c.nfqueueID),
 		MaxPacketLen: 128, // only interested in the headers
-		MaxQueueLen:  255,
+		MaxQueueLen:  1024,
 		Copymode:     nfqueue.NfQnlCopyPacket, // headers
-		WriteTimeout: 15 * time.Millisecond,
+		// WriteTimeout: 500 * time.Millisecond,
 	}
 
 	nf, err := nfqueue.Open(&config)
@@ -246,7 +246,7 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 			}
 		}
 		klog.Infof("Could not receive message: %v\n", err)
-		return 1
+		return 0
 	})
 	if err != nil {
 		klog.Infof("could not open nfqueue socket: %v", err)
