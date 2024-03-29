@@ -1,8 +1,57 @@
 package networkpolicy
 
+import (
+	"fmt"
+	"testing"
+
+	"github.com/coreos/go-iptables/iptables"
+	v1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/utils/ptr"
+)
+
+func makeValidNetworkPolicy() *networkingv1.NetworkPolicy {
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "foo", Namespace: "bar"},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{
+				MatchLabels: map[string]string{"a": "b"},
+			},
+		},
+	}
+}
+
+type netpolTweak func(networkPolicy *networkingv1.NetworkPolicy)
+
+func makeNetworkPolicyCustom(tweaks ...netpolTweak) *networkingv1.NetworkPolicy {
+	networkPolicy := makeValidNetworkPolicy()
+	for _, fn := range tweaks {
+		fn(networkPolicy)
+	}
+	return networkPolicy
+}
+
+func makePort(proto *v1.Protocol, port intstr.IntOrString, endPort int32) networkingv1.NetworkPolicyPort {
+	r := networkingv1.NetworkPolicyPort{
+		Protocol: proto,
+		Port:     nil,
+	}
+	if port != intstr.FromInt32(0) && port != intstr.FromString("") && port != intstr.FromString("0") {
+		r.Port = &port
+	}
+	if endPort != 0 {
+		r.EndPort = ptr.To[int32](endPort)
+	}
+	return r
+}
+
 var alwaysReady = func() bool { return true }
 
-/*
 type networkpolicyController struct {
 	*Controller
 	networkpolicyStore cache.Store
@@ -11,13 +60,17 @@ type networkpolicyController struct {
 }
 
 func newController() *networkpolicyController {
+	ipt, err := iptables.New()
+	if err != nil {
+		panic(fmt.Sprintf("New failed: %v", err))
+	}
 	client := fake.NewSimpleClientset()
 	informersFactory := informers.NewSharedInformerFactory(client, 0)
 	controller := NewController(client,
 		informersFactory.Networking().V1().NetworkPolicies(),
 		informersFactory.Core().V1().Namespaces(),
 		informersFactory.Core().V1().Pods(),
-		iptables.fake,
+		ipt,
 	)
 	controller.networkpoliciesSynced = alwaysReady
 	controller.namespacesSynced = alwaysReady
@@ -30,51 +83,37 @@ func newController() *networkpolicyController {
 	}
 }
 
-func TestSyncNetworkPolicy(t *testing.T) {
-	npName := "test"
-	ns := "test-ns"
+func TestSyncPacket(t *testing.T) {
+
 	tests := []struct {
-		name           string
-		networkpolicy  *networkingv1.NetworkPolicy
-		namespace      *v1.Namespace
-		pod            *v1.Pod
-		expectedAction nfqueue.Action
-	}{
-		{
-			name: "Default deny all traffic",
-			networkpolicy: &networkingv1.NetworkPolicy{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "default-deny-all",
-				},
-				Spec: networkingv1.NetworkPolicySpec{
-					PodSelector: metav1.LabelSelector{},
-					PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress, networkingv1.PolicyTypeIngress},
-					Ingress:     []networkingv1.NetworkPolicyIngressRule{},
-					Egress:      []networkingv1.NetworkPolicyEgressRule{},
-				},
-			},
-			namespace:      &v1.Namespace{},
-			pod:            &v1.Pod{},
-			expectedPolicy: &Policy{},
-		},
-	}
+		name          string
+		networkpolicy []networkingv1.NetworkPolicy
+		namespace     []v1.Namespace
+		pod           []v1.Pod
+		p             packet
+		expect        bool
+	}{}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			controller := newController()
 			// Add objects to the Store
 
-			controller.networkpolicyStore.Add(tt.networkpolicy)
-			controller.namespaceStore.Add(tt.namespace)
-			controller.podStore.Add(tt.pod)
+			for _, n := range tt.networkpolicy {
+				controller.networkpolicyStore.Add(n)
+			}
+			for _, n := range tt.namespace {
+				controller.namespaceStore.Add(n)
+			}
+			for _, n := range tt.pod {
+				controller.podStore.Add(n)
+			}
 
-			err := controller.syncPacket(ns + "/" + npName)
-			if err != nil {
-				t.Errorf("syncServices error: %v", err)
+			ok := controller.acceptPacket(tt.p)
+			if ok != tt.expect {
+				t.Errorf("expected %v got  %v", ok, tt.expect)
 			}
 
 		})
 	}
 }
-
-*/
