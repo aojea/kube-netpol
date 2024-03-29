@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"os"
 	"os/signal"
@@ -19,6 +20,7 @@ import (
 func main() {
 	// enable logging
 	klog.InitFlags(nil)
+	flag.Parse()
 	// creates the in-cluster config
 	config, err := rest.InClusterConfig()
 	if err != nil {
