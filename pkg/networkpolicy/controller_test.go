@@ -2,6 +2,7 @@ package networkpolicy
 
 import (
 	"fmt"
+	"net"
 	"testing"
 
 	"github.com/coreos/go-iptables/iptables"
@@ -50,6 +51,49 @@ func makePort(proto *v1.Protocol, port intstr.IntOrString, endPort int32) networ
 	return r
 }
 
+func makeNamespace(name string) *v1.Namespace {
+	return &v1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+			Labels: map[string]string{
+				"kubernetes.io/metadata.name": name,
+			},
+		},
+	}
+}
+func makePod(name, ns string, ip string) *v1.Pod {
+	pod := &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: ns,
+			Labels: map[string]string{
+				"a": "b",
+			},
+		},
+		Spec: v1.PodSpec{
+			Containers: []v1.Container{
+				{
+					Name:    "write-pod",
+					Command: []string{"/bin/sh"},
+					Ports: []v1.ContainerPort{{
+						Name:          "http",
+						ContainerPort: 80,
+						Protocol:      v1.ProtocolTCP,
+					}},
+				},
+			},
+		},
+		Status: v1.PodStatus{
+			PodIPs: []v1.PodIP{
+				{IP: ip},
+			},
+		},
+	}
+
+	return pod
+
+}
+
 var alwaysReady = func() bool { return true }
 
 type networkpolicyController struct {
@@ -84,15 +128,29 @@ func newController() *networkpolicyController {
 }
 
 func TestSyncPacket(t *testing.T) {
-
 	tests := []struct {
 		name          string
-		networkpolicy []networkingv1.NetworkPolicy
-		namespace     []v1.Namespace
-		pod           []v1.Pod
+		networkpolicy []*networkingv1.NetworkPolicy
+		namespace     []*v1.Namespace
+		pod           []*v1.Pod
 		p             packet
 		expect        bool
-	}{}
+	}{
+		{
+			name:          "no network policies",
+			networkpolicy: []*networkingv1.NetworkPolicy{makeValidNetworkPolicy()},
+			namespace:     []*v1.Namespace{makeNamespace("a"), makeNamespace("b")},
+			pod:           []*v1.Pod{makePod("a", "a", "192.168.1.11")},
+			p: packet{
+				srcIP:   net.ParseIP("192.168.1.11"),
+				srcPort: 52345,
+				dstIP:   net.ParseIP("192.168.2.22"),
+				dstPort: 80,
+				proto:   v1.ProtocolTCP,
+			},
+			expect: true,
+		},
+	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -105,8 +163,8 @@ func TestSyncPacket(t *testing.T) {
 			for _, n := range tt.namespace {
 				controller.namespaceStore.Add(n)
 			}
-			for _, n := range tt.pod {
-				controller.podStore.Add(n)
+			for _, p := range tt.pod {
+				controller.podStore.Add(p)
 			}
 
 			ok := controller.acceptPacket(tt.p)

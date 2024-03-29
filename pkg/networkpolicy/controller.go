@@ -10,6 +10,7 @@ import (
 
 	"github.com/coreos/go-iptables/iptables"
 	nfqueue "github.com/florianl/go-nfqueue"
+	"github.com/mdlayher/netlink"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -224,12 +225,19 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 		histogramVec.WithLabelValues(string(packet.proto)).Observe(float64(time.Since(startTime).Microseconds()))
 		packetCounterVec.WithLabelValues(string(packet.proto)).Inc()
 		klog.V(0).Infof("Finished syncing packet %d took %v result %v", *a.PacketID, time.Since(startTime), verdict)
-
 		return 0
 	}
 
 	// Register your function to listen on nflog group 100
-	err = nf.Register(ctx, fn)
+	err = nf.RegisterWithErrorFunc(ctx, fn, func(err error) int {
+		if opError, ok := err.(*netlink.OpError); ok {
+			if opError.Timeout() || opError.Temporary() {
+				return 0
+			}
+		}
+		klog.Infof("Could not receive message: %v\n", err)
+		return 1
+	})
 	if err != nil {
 		klog.Infof("could not open nfqueue socket: %v", err)
 		return err
@@ -290,7 +298,7 @@ func (c *Controller) acceptPacket(p packet) bool {
 	dstPort := p.dstPort
 	protocol := p.proto
 
-	klog.V(2).Infof("syncing packet %s SrcPod %+v DstPod %+v", p.String(), srcPod, dstPod)
+	klog.V(0).Infof("syncing packet %s SrcPod %+v DstPod %+v", p.String(), srcPod, dstPod)
 
 	srcPodNetworkPolices := c.getNetworkPoliciesForPod(srcPod)
 	dstPodNetworkPolices := c.getNetworkPoliciesForPod(dstPod)
@@ -346,6 +354,13 @@ func (c *Controller) validator(
 					continue
 				}
 				for _, rule := range netpol.Spec.Egress {
+					if len(rule.Ports) != 0 {
+						ok := c.validatePorts(rule.Ports, dstPod, dstPort, proto)
+						if !ok {
+							verdict = false
+							continue
+						}
+					}
 					// to is a list of destinations for outgoing traffic of pods selected for this rule.
 					// Items in this list are combined using a logical OR operation. If this field is
 					// empty or missing, this rule matches all destinations (traffic not restricted by
@@ -428,7 +443,15 @@ func (c *Controller) validator(
 					verdict = false
 					continue
 				}
+
 				for _, rule := range netpol.Spec.Ingress {
+					if len(rule.Ports) != 0 {
+						ok := c.validatePorts(rule.Ports, srcPod, srcPort, proto)
+						if !ok {
+							verdict = false
+							continue
+						}
+					}
 					// to is a list of destinations for outgoing traffic of pods selected for this rule.
 					// Items in this list are combined using a logical OR operation. If this field is
 					// empty or missing, this rule matches all destinations (traffic not restricted by
@@ -561,9 +584,19 @@ func (c *Controller) validatePorts(networkPolicyPorts []networkingv1.NetworkPoli
 		if policyPort.Port == nil {
 			return true
 		}
-		// TODO named ports
 		if port == policyPort.Port.IntValue() {
 			return true
+		}
+		if policyPort.Port.StrVal != "" {
+			for _, container := range pod.Spec.Containers {
+				for _, p := range container.Ports {
+					if p.Name == policyPort.Port.StrVal &&
+						p.ContainerPort == int32(port) &&
+						p.Protocol == protocol {
+						return true
+					}
+				}
+			}
 		}
 		// endPort indicates that the range of ports from port to endPort if set, inclusive,
 		// should be allowed by the policy. This field cannot be defined if the port field
