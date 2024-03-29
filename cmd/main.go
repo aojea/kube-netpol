@@ -60,6 +60,7 @@ func main() {
 			informersFactory.Core().V1().Namespaces(),
 			informersFactory.Core().V1().Pods(),
 			ipt4,
+			104,
 		)
 		go networkPolicyController4.Run(ctx, 5)
 	} else {
@@ -82,6 +83,7 @@ func main() {
 			informersFactory.Core().V1().Namespaces(),
 			informersFactory.Core().V1().Pods(),
 			ipt6,
+			106,
 		)
 		go networkPolicyController6.Run(ctx, 5)
 	} else {

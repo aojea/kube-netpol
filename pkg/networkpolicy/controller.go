@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -78,6 +79,7 @@ func NewController(client clientset.Interface,
 	namespaceInformer coreinformers.NamespaceInformer,
 	podInformer coreinformers.PodInformer,
 	ipt *iptables.IPTables,
+	nfqueueID int,
 ) *Controller {
 	klog.V(4).Info("Creating event broadcaster")
 	broadcaster := record.NewBroadcaster()
@@ -86,8 +88,9 @@ func NewController(client clientset.Interface,
 	recorder := broadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: controllerName})
 
 	c := &Controller{
-		client: client,
-		ipt:    ipt,
+		client:    client,
+		ipt:       ipt,
+		nfqueueID: nfqueueID,
 	}
 
 	// TODO handle dual stack
@@ -166,8 +169,9 @@ type Controller struct {
 	// if an error or not found it returns nil
 	getPodAssignedToIP func(podIP string) *v1.Pod
 	// install the necessary iptables rules
-	ipt *iptables.IPTables
-	nfq *nfqueue.Nfqueue
+	ipt       *iptables.IPTables
+	nfq       *nfqueue.Nfqueue
+	nfqueueID int
 }
 
 // Run will not return until stopCh is closed. workers determines how many
@@ -195,7 +199,7 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 
 	// Set configuration options for nfqueue
 	config := nfqueue.Config{
-		NfQueue:      100,
+		NfQueue:      uint16(c.nfqueueID),
 		MaxPacketLen: 128, // only interested in the headers
 		MaxQueueLen:  255,
 		Copymode:     nfqueue.NfQnlCopyPacket, // headers
@@ -260,22 +264,22 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 // It change the behavior of a iptables rules when no userspace software is connected to the queue.
 // Instead of dropping packets, the packet are authorized if no software is listening to the queue.
 func (c *Controller) syncIptablesRules() {
-	if err := c.ipt.InsertUnique("filter", "FORWARD", 1, "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", "100"); err != nil {
+	if err := c.ipt.InsertUnique("filter", "FORWARD", 1, "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", strconv.Itoa(c.nfqueueID)); err != nil {
 		klog.Infof("error syncing iptables rule %v", err)
 	}
 
-	if err := c.ipt.InsertUnique("filter", "OUTPUT", 1, "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", "100"); err != nil {
+	if err := c.ipt.InsertUnique("filter", "OUTPUT", 1, "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", strconv.Itoa(c.nfqueueID)); err != nil {
 		klog.Infof("error syncing iptables rule %v", err)
 	}
 }
 
 func (c *Controller) cleanIptablesRules() {
-	if err := c.ipt.Delete("filter", "FORWARD", "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", "100"); err != nil {
-		klog.Infof("error syncing iptables rule %v", err)
+	if err := c.ipt.Delete("filter", "FORWARD", "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", strconv.Itoa(c.nfqueueID)); err != nil {
+		klog.Infof("error deleting iptables rule %v", err)
 	}
 
-	if err := c.ipt.Delete("filter", "OUTPUT", "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", "100"); err != nil {
-		klog.Infof("error syncing iptables rule %v", err)
+	if err := c.ipt.Delete("filter", "OUTPUT", "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", strconv.Itoa(c.nfqueueID)); err != nil {
+		klog.Infof("error deleting iptables rule %v", err)
 	}
 }
 
