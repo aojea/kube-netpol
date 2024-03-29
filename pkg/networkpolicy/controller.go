@@ -354,11 +354,17 @@ func (c *Controller) validator(
 				// across all of the NetworkPolicy objects whose podSelector matches the pod. If
 				// this field is empty then this NetworkPolicy limits all outgoing traffic (and serves
 				// solely to ensure that the pods it selects are isolated by default).
-				if len(netpol.Spec.Egress) == 0 {
+				if netpol.Spec.Egress == nil {
 					klog.V(2).Infof("Pod %s/%s has limited all egress traffic by NetworkPolicy %s/%s", srcPod.Name, srcPod.Namespace, netpol.Name, netpol.Namespace)
 					verdict = false
 					continue
 				}
+
+				if len(netpol.Spec.Egress) == 0 {
+					klog.V(2).Infof("Pod %s/%s has allowed all egress traffic by NetworkPolicy %s/%s", srcPod.Name, srcPod.Namespace, netpol.Name, netpol.Namespace)
+					return true
+				}
+
 				for _, rule := range netpol.Spec.Egress {
 					if len(rule.Ports) != 0 {
 						ok := c.validatePorts(rule.Ports, dstPod, dstPort, proto)
@@ -450,15 +456,22 @@ func (c *Controller) validator(
 			}
 
 			if policyType == networkingv1.PolicyTypeIngress {
-				// egress is a list of egress rules to be applied to the selected pods. Outgoing traffic
-				// is allowed if there are no NetworkPolicies selecting the pod (and cluster policy
-				// otherwise allows the traffic), OR if the traffic matches at least one egress rule
+				// ingress is a list of ingress rules to be applied to the selected pods.
+				// Traffic is allowed to a pod if there are no NetworkPolicies selecting the pod
+				// (and cluster policy otherwise allows the traffic), OR if the traffic source is
+				// the pod's local node, OR if the traffic matches at least one ingress rule
 				// across all of the NetworkPolicy objects whose podSelector matches the pod. If
-				// this field is empty then this NetworkPolicy limits all outgoing traffic (and serves
-				// solely to ensure that the pods it selects are isolated by default).
-				if len(netpol.Spec.Ingress) == 0 {
+				// this field is empty then this NetworkPolicy does not allow any traffic (and serves
+				// solely to ensure that the pods it selects are isolated by default)
+				if netpol.Spec.Ingress == nil {
+					klog.V(2).Infof("Pod %s/%s has limited all ingress traffic by NetworkPolicy %s/%s", dstPod.Name, dstPod.Namespace, netpol.Name, netpol.Namespace)
 					verdict = false
 					continue
+				}
+
+				if len(netpol.Spec.Ingress) == 0 {
+					klog.V(2).Infof("Pod %s/%s has allowed all ingress traffic by NetworkPolicy %s/%s", dstPod.Name, dstPod.Namespace, netpol.Name, netpol.Namespace)
+					return true
 				}
 
 				for _, rule := range netpol.Spec.Ingress {

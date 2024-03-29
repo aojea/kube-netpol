@@ -135,6 +135,13 @@ func TestSyncPacket(t *testing.T) {
 			networkPolicy.Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}
 		})
 
+	npAllowAllIngress := makeNetworkPolicyCustom("default-deny-ingress", "bar",
+		func(networkPolicy *networkingv1.NetworkPolicy) {
+			networkPolicy.Spec.PodSelector = metav1.LabelSelector{}
+			networkPolicy.Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}
+			networkPolicy.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{}
+		})
+
 	tests := []struct {
 		name          string
 		networkpolicy []*networkingv1.NetworkPolicy
@@ -144,7 +151,21 @@ func TestSyncPacket(t *testing.T) {
 		expect        bool
 	}{
 		{
-			name:          "matching network policies",
+			name:          "no network policy",
+			networkpolicy: []*networkingv1.NetworkPolicy{},
+			namespace:     []*v1.Namespace{makeNamespace("foo"), makeNamespace("bar")},
+			pod:           []*v1.Pod{podA, podB},
+			p: packet{
+				srcIP:   net.ParseIP("192.168.1.11"),
+				srcPort: 52345,
+				dstIP:   net.ParseIP("192.168.2.22"),
+				dstPort: 80,
+				proto:   v1.ProtocolTCP,
+			},
+			expect: true,
+		},
+		{
+			name:          "deny ingress",
 			networkpolicy: []*networkingv1.NetworkPolicy{npDefaultDenyIngress},
 			namespace:     []*v1.Namespace{makeNamespace("foo"), makeNamespace("bar")},
 			pod:           []*v1.Pod{podA, podB},
@@ -156,6 +177,20 @@ func TestSyncPacket(t *testing.T) {
 				proto:   v1.ProtocolTCP,
 			},
 			expect: false,
+		},
+		{
+			name:          "allow all override deny ingress",
+			networkpolicy: []*networkingv1.NetworkPolicy{npDefaultDenyIngress, npAllowAllIngress},
+			namespace:     []*v1.Namespace{makeNamespace("foo"), makeNamespace("bar")},
+			pod:           []*v1.Pod{podA, podB},
+			p: packet{
+				srcIP:   net.ParseIP("192.168.1.11"),
+				srcPort: 52345,
+				dstIP:   net.ParseIP("192.168.2.22"),
+				dstPort: 80,
+				proto:   v1.ProtocolTCP,
+			},
+			expect: true,
 		},
 	}
 
