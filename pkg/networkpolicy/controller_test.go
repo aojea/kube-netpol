@@ -109,6 +109,7 @@ func newController() *networkpolicyController {
 		informersFactory.Core().V1().Namespaces(),
 		informersFactory.Core().V1().Pods(),
 		ipt,
+		100,
 	)
 	controller.networkpoliciesSynced = alwaysReady
 	controller.namespacesSynced = alwaysReady
