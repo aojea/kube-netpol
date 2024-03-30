@@ -212,6 +212,18 @@ func TestSyncPacket(t *testing.T) {
 			}}
 		})
 
+	npMultiPortIngressPodNsSelector := makeNetworkPolicyCustom("multiport-inress-pod-ns", "foo",
+		func(networkPolicy *networkingv1.NetworkPolicy) {
+			networkPolicy.Spec.PodSelector = metav1.LabelSelector{MatchLabels: map[string]string{"a": "b"}}
+			networkPolicy.Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeEgress}
+			networkPolicy.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{
+				From: []networkingv1.NetworkPolicyPeer{{
+					PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{"a": "b"}},
+					NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"a": "b"}},
+				}},
+			}}
+		})
+
 	tests := []struct {
 		name          string
 		networkpolicy []*networkingv1.NetworkPolicy
@@ -405,6 +417,34 @@ func TestSyncPacket(t *testing.T) {
 		{
 			name:          "multiport allow egress ns and pod selector fail",
 			networkpolicy: []*networkingv1.NetworkPolicy{npDefaultDenyEgress, npMultiPortEgress, npMultiPortEgressPodNsSelector},
+			namespace:     []*v1.Namespace{makeNamespace("foo"), makeNamespace("bar")},
+			pod:           []*v1.Pod{podA, podB, podC},
+			p: packet{
+				srcIP:   net.ParseIP("192.168.1.11"),
+				srcPort: 52345,
+				dstIP:   net.ParseIP("192.168.3.33"),
+				dstPort: 80,
+				proto:   v1.ProtocolTCP,
+			},
+			expect: false,
+		},
+		{
+			name:          "multiport allow ingress ns and pod selector",
+			networkpolicy: []*networkingv1.NetworkPolicy{npDefaultDenyIngress, npMultiPortIngressPodNsSelector},
+			namespace:     []*v1.Namespace{makeNamespace("foo"), makeNamespace("bar")},
+			pod:           []*v1.Pod{podA, podB, podC},
+			p: packet{
+				srcIP:   net.ParseIP("192.168.1.11"),
+				srcPort: 52345,
+				dstIP:   net.ParseIP("192.168.2.22"),
+				dstPort: 80,
+				proto:   v1.ProtocolTCP,
+			},
+			expect: true,
+		},
+		{
+			name:          "multiport allow ingress ns and pod selector fail",
+			networkpolicy: []*networkingv1.NetworkPolicy{npDefaultDenyIngress, npMultiPortIngressPodNsSelector},
 			namespace:     []*v1.Namespace{makeNamespace("foo"), makeNamespace("bar")},
 			pod:           []*v1.Pod{podA, podB, podC},
 			p: packet{

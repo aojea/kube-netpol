@@ -451,7 +451,7 @@ func (c *Controller) evaluateIngress(netpolNamespace string, ingressRules []netw
 			}
 
 			if peer.NamespaceSelector != nil || peer.PodSelector != nil {
-				if c.evaluateSelectors(peer.PodSelector, peer.NamespaceSelector, srcPod, netpolNamespace) {
+				if c.evaluateSelectors(peer.PodSelector, peer.NamespaceSelector, dstPod, netpolNamespace) {
 					klog.V(2).Infof("Pod %s/%s is accessible from Pod %s/%s because match selectors", srcPod.Name, srcPod.Namespace, dstPod.Name, dstPod.Namespace)
 					return true
 				}
