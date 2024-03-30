@@ -89,7 +89,11 @@ func makePod(name, ns string, ip string) *v1.Pod {
 
 }
 
-var alwaysReady = func() bool { return true }
+var (
+	alwaysReady = func() bool { return true }
+	protocolTCP = v1.ProtocolTCP
+	protocolUDP = v1.ProtocolUDP
+)
 
 type networkpolicyController struct {
 	*Controller
@@ -127,8 +131,6 @@ func TestSyncPacket(t *testing.T) {
 	logs.GlogSetter("4")
 	state := klog.CaptureState()
 	t.Cleanup(state.Restore)
-
-	protocolTCP := v1.ProtocolTCP
 
 	podA := makePod("a", "foo", "192.168.1.11")
 	podB := makePod("b", "bar", "192.168.2.22")
@@ -420,7 +422,6 @@ func TestSyncPacket(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			controller := newController()
 			// Add objects to the Store
-
 			for _, n := range tt.networkpolicy {
 				controller.networkpolicyStore.Add(n)
 			}
@@ -436,6 +437,182 @@ func TestSyncPacket(t *testing.T) {
 				t.Errorf("expected %v got  %v", ok, tt.expect)
 			}
 
+		})
+	}
+}
+
+func TestController_evaluateSelectors(t *testing.T) {
+	tests := []struct {
+		name            string
+		networkpolicies []*networkingv1.NetworkPolicy
+		namespaces      []*v1.Namespace
+		pods            []*v1.Pod
+		peerPodSelector *metav1.LabelSelector
+		peerNSSelector  *metav1.LabelSelector
+		pod             *v1.Pod
+		policyNs        string
+		want            bool
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newController()
+			// Add objects to the Store
+			for _, n := range tt.networkpolicies {
+				c.networkpolicyStore.Add(n)
+			}
+			for _, n := range tt.namespaces {
+				c.namespaceStore.Add(n)
+			}
+			for _, p := range tt.pods {
+				c.podStore.Add(p)
+			}
+			if got := c.evaluateSelectors(tt.peerPodSelector, tt.peerNSSelector, tt.pod, tt.policyNs); got != tt.want {
+				t.Errorf("Controller.evaluateSelectors() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestController_evaluateIPBlocks(t *testing.T) {
+	tests := []struct {
+		name    string
+		ipBlock *networkingv1.IPBlock
+		ip      net.IP
+		want    bool
+	}{
+		{
+			name: "empty",
+			want: true,
+		},
+		{
+			name:    "match cidr",
+			ipBlock: &networkingv1.IPBlock{CIDR: "192.168.0.0/24"},
+			ip:      net.ParseIP("192.168.0.1"),
+			want:    true,
+		},
+		{
+			name:    "no match cidr",
+			ipBlock: &networkingv1.IPBlock{CIDR: "192.168.0.0/24"},
+			ip:      net.ParseIP("10.0.0.1"),
+			want:    false,
+		},
+		{
+			name:    "match cidr and not except",
+			ipBlock: &networkingv1.IPBlock{CIDR: "192.168.0.0/24", Except: []string{"192.168.1.0/24"}},
+			ip:      net.ParseIP("192.168.0.1"),
+			want:    true,
+		},
+		{
+			name:    "match cidr and  except",
+			ipBlock: &networkingv1.IPBlock{CIDR: "192.168.0.0/24", Except: []string{"192.168.1.0/24"}},
+			ip:      net.ParseIP("192.168.1.1"),
+			want:    false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newController()
+			if got := c.evaluateIPBlocks(tt.ipBlock, tt.ip); got != tt.want {
+				t.Errorf("Controller.evaluateIPBlocks() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestController_evaluatePorts(t *testing.T) {
+	tests := []struct {
+		name               string
+		networkPolicyPorts []networkingv1.NetworkPolicyPort
+		pod                *v1.Pod
+		port               int
+		protocol           v1.Protocol
+		want               bool
+	}{
+		{
+			name: "empty",
+			want: true,
+		},
+		{
+			name:               "match TCP",
+			networkPolicyPorts: []networkingv1.NetworkPolicyPort{makePort(&protocolTCP, intstr.FromInt32(30000), 0)},
+			port:               30000,
+			protocol:           protocolTCP,
+			want:               true,
+		},
+		{
+			name:               "match UDP",
+			networkPolicyPorts: []networkingv1.NetworkPolicyPort{makePort(&protocolUDP, intstr.FromInt32(30000), 0)},
+			port:               30000,
+			protocol:           protocolUDP,
+			want:               true,
+		},
+		{
+			name:               "no match TCP",
+			networkPolicyPorts: []networkingv1.NetworkPolicyPort{makePort(&protocolTCP, intstr.FromInt32(30000), 0)},
+			port:               138,
+			protocol:           protocolTCP,
+			want:               false,
+		},
+		{
+			name:               "no match UDP",
+			networkPolicyPorts: []networkingv1.NetworkPolicyPort{makePort(&protocolUDP, intstr.FromInt32(30000), 0)},
+			port:               138,
+			protocol:           protocolUDP,
+			want:               false,
+		},
+		{
+			name:               "match TCP range",
+			networkPolicyPorts: []networkingv1.NetworkPolicyPort{makePort(&protocolTCP, intstr.FromInt32(30000), 65537)},
+			port:               30138,
+			protocol:           protocolTCP,
+			want:               true,
+		},
+		{
+			name:               "match UDP range",
+			networkPolicyPorts: []networkingv1.NetworkPolicyPort{makePort(&protocolUDP, intstr.FromInt32(30000), 65537)},
+			port:               30138,
+			protocol:           protocolUDP,
+			want:               true,
+		},
+		{
+			name:               "no match TCP range",
+			networkPolicyPorts: []networkingv1.NetworkPolicyPort{makePort(&protocolTCP, intstr.FromInt32(30000), 65537)},
+			port:               138,
+			protocol:           protocolTCP,
+			want:               false,
+		},
+		{
+			name:               "no match UDP range",
+			networkPolicyPorts: []networkingv1.NetworkPolicyPort{makePort(&protocolUDP, intstr.FromInt32(30000), 65537)},
+			port:               138,
+			protocol:           protocolUDP,
+			want:               false,
+		},
+		{
+			name:               "match TCP named port",
+			networkPolicyPorts: []networkingv1.NetworkPolicyPort{makePort(&protocolTCP, intstr.FromString("http"), 0)},
+			pod:                makePod("a", "b", "192.168.1.1"),
+			port:               80,
+			protocol:           protocolTCP,
+			want:               true,
+		},
+		{
+			name:               "no match UDP named port",
+			networkPolicyPorts: []networkingv1.NetworkPolicyPort{makePort(&protocolUDP, intstr.FromString("http"), 0)},
+			pod:                makePod("a", "b", "192.168.1.1"),
+			port:               80,
+			protocol:           protocolTCP,
+			want:               false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newController()
+			if got := c.evaluatePorts(tt.networkPolicyPorts, tt.pod, tt.port, tt.protocol); got != tt.want {
+				t.Errorf("Controller.evaluatePorts() = %v, want %v", got, tt.want)
+			}
 		})
 	}
 }
