@@ -263,6 +263,7 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 // --queue-bypass is on other NFQUEUE option by Florian Westphal.
 // It change the behavior of a iptables rules when no userspace software is connected to the queue.
 // Instead of dropping packets, the packet are authorized if no software is listening to the queue.
+// TODO: We can divert only the traffic affected by network policies using a set in nftables or an IPset.
 func (c *Controller) syncIptablesRules() {
 	if err := c.ipt.InsertUnique("filter", "FORWARD", 1, "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", strconv.Itoa(c.nfqueueID)); err != nil {
 		klog.Infof("error syncing iptables rule %v", err)
