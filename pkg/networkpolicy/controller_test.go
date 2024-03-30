@@ -51,6 +51,7 @@ func makeNamespace(name string) *v1.Namespace {
 			Name: name,
 			Labels: map[string]string{
 				"kubernetes.io/metadata.name": name,
+				"a":                           "b",
 			},
 		},
 	}
@@ -183,6 +184,29 @@ func TestSyncPacket(t *testing.T) {
 			}}
 		})
 
+	npMultiPortEgressNsSelector := makeNetworkPolicyCustom("multiport-egress", "foo",
+		func(networkPolicy *networkingv1.NetworkPolicy) {
+			networkPolicy.Spec.PodSelector = metav1.LabelSelector{MatchLabels: map[string]string{"a": "b"}}
+			networkPolicy.Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeEgress}
+			networkPolicy.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{{
+				To: []networkingv1.NetworkPolicyPeer{{
+					NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"a": "b"}},
+				}},
+			}}
+		})
+
+	npMultiPortEgressPodNsSelector := makeNetworkPolicyCustom("multiport-egress", "foo",
+		func(networkPolicy *networkingv1.NetworkPolicy) {
+			networkPolicy.Spec.PodSelector = metav1.LabelSelector{MatchLabels: map[string]string{"a": "b"}}
+			networkPolicy.Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeEgress}
+			networkPolicy.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{{
+				To: []networkingv1.NetworkPolicyPeer{{
+					PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{"a": "b"}},
+					NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"a": "b"}},
+				}},
+			}}
+		})
+
 	tests := []struct {
 		name          string
 		networkpolicy []*networkingv1.NetworkPolicy
@@ -263,7 +287,7 @@ func TestSyncPacket(t *testing.T) {
 		},
 		{
 			name:          "multiport deny egress port",
-			networkpolicy: []*networkingv1.NetworkPolicy{npMultiPortEgress},
+			networkpolicy: []*networkingv1.NetworkPolicy{npDefaultDenyEgress, npMultiPortEgress},
 			namespace:     []*v1.Namespace{makeNamespace("foo"), makeNamespace("bar")},
 			pod:           []*v1.Pod{podA, podB},
 			p: packet{
@@ -277,7 +301,7 @@ func TestSyncPacket(t *testing.T) {
 		},
 		{
 			name:          "multiport allow egress port",
-			networkpolicy: []*networkingv1.NetworkPolicy{npMultiPortEgress},
+			networkpolicy: []*networkingv1.NetworkPolicy{npDefaultDenyEgress, npMultiPortEgress},
 			namespace:     []*v1.Namespace{makeNamespace("foo"), makeNamespace("bar")},
 			pod:           []*v1.Pod{podA, podB},
 			p: packet{
@@ -291,7 +315,7 @@ func TestSyncPacket(t *testing.T) {
 		},
 		{
 			name:          "multiport allow egress",
-			networkpolicy: []*networkingv1.NetworkPolicy{npMultiPortEgress, npMultiPortEgressIPBlock},
+			networkpolicy: []*networkingv1.NetworkPolicy{npDefaultDenyEgress, npMultiPortEgress, npMultiPortEgressIPBlock},
 			namespace:     []*v1.Namespace{makeNamespace("foo"), makeNamespace("bar")},
 			pod:           []*v1.Pod{podA, podB},
 			p: packet{
@@ -304,8 +328,8 @@ func TestSyncPacket(t *testing.T) {
 			expect: true,
 		},
 		{
-			name:          "multiport allow egress",
-			networkpolicy: []*networkingv1.NetworkPolicy{npMultiPortEgress, npMultiPortEgressPodSelector},
+			name:          "multiport allow egress port selector",
+			networkpolicy: []*networkingv1.NetworkPolicy{npDefaultDenyEgress, npMultiPortEgress, npMultiPortEgressPodSelector},
 			namespace:     []*v1.Namespace{makeNamespace("foo"), makeNamespace("bar")},
 			pod:           []*v1.Pod{podA, podB},
 			p: packet{
@@ -316,6 +340,76 @@ func TestSyncPacket(t *testing.T) {
 				proto:   v1.ProtocolTCP,
 			},
 			expect: true,
+		},
+		{
+			name:          "multiport allow egress port selector fail",
+			networkpolicy: []*networkingv1.NetworkPolicy{npDefaultDenyEgress, npMultiPortEgress, npMultiPortEgressPodSelector},
+			namespace:     []*v1.Namespace{makeNamespace("foo"), makeNamespace("bar")},
+			pod:           []*v1.Pod{podA, podB},
+			p: packet{
+				srcIP:   net.ParseIP("192.168.1.11"),
+				srcPort: 52345,
+				dstIP:   net.ParseIP("192.168.3.33"),
+				dstPort: 80,
+				proto:   v1.ProtocolTCP,
+			},
+			expect: false,
+		},
+		{
+			name:          "multiport allow egress ns selector",
+			networkpolicy: []*networkingv1.NetworkPolicy{npDefaultDenyEgress, npMultiPortEgress, npMultiPortEgressNsSelector},
+			namespace:     []*v1.Namespace{makeNamespace("foo"), makeNamespace("bar")},
+			pod:           []*v1.Pod{podA, podB},
+			p: packet{
+				srcIP:   net.ParseIP("192.168.1.11"),
+				srcPort: 52345,
+				dstIP:   net.ParseIP("192.168.2.22"),
+				dstPort: 80,
+				proto:   v1.ProtocolTCP,
+			},
+			expect: true,
+		},
+		{
+			name:          "multiport allow egress ns selector fail",
+			networkpolicy: []*networkingv1.NetworkPolicy{npDefaultDenyEgress, npMultiPortEgress, npMultiPortEgressNsSelector},
+			namespace:     []*v1.Namespace{makeNamespace("foo"), makeNamespace("bar")},
+			pod:           []*v1.Pod{podA, podB},
+			p: packet{
+				srcIP:   net.ParseIP("192.168.1.11"),
+				srcPort: 52345,
+				dstIP:   net.ParseIP("192.168.3.33"),
+				dstPort: 80,
+				proto:   v1.ProtocolTCP,
+			},
+			expect: false,
+		},
+		{
+			name:          "multiport allow egress ns and pod selector",
+			networkpolicy: []*networkingv1.NetworkPolicy{npDefaultDenyEgress, npMultiPortEgress, npMultiPortEgressPodNsSelector},
+			namespace:     []*v1.Namespace{makeNamespace("foo"), makeNamespace("bar")},
+			pod:           []*v1.Pod{podA, podB},
+			p: packet{
+				srcIP:   net.ParseIP("192.168.1.11"),
+				srcPort: 52345,
+				dstIP:   net.ParseIP("192.168.2.22"),
+				dstPort: 80,
+				proto:   v1.ProtocolTCP,
+			},
+			expect: true,
+		},
+		{
+			name:          "multiport allow egress ns and pod selector fail",
+			networkpolicy: []*networkingv1.NetworkPolicy{npDefaultDenyEgress, npMultiPortEgress, npMultiPortEgressPodNsSelector},
+			namespace:     []*v1.Namespace{makeNamespace("foo"), makeNamespace("bar")},
+			pod:           []*v1.Pod{podA, podB},
+			p: packet{
+				srcIP:   net.ParseIP("192.168.1.11"),
+				srcPort: 52345,
+				dstIP:   net.ParseIP("192.168.3.33"),
+				dstPort: 80,
+				proto:   v1.ProtocolTCP,
+			},
+			expect: false,
 		},
 	}
 
