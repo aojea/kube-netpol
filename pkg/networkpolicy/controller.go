@@ -452,7 +452,7 @@ func (c *Controller) evaluateIngress(netpolNamespace string, ingressRules []netw
 
 			if peer.NamespaceSelector != nil || peer.PodSelector != nil {
 				if c.evaluateSelectors(peer.PodSelector, peer.NamespaceSelector, srcPod, netpolNamespace) {
-					klog.V(2).Infof("Pod %s/%s is not accessible from Pod %s/%s because does not match selectors", srcPod.Name, srcPod.Namespace, dstPod.Name, dstPod.Namespace)
+					klog.V(2).Infof("Pod %s/%s is accessible from Pod %s/%s because match selectors", srcPod.Name, srcPod.Namespace, dstPod.Name, dstPod.Namespace)
 					return true
 				}
 			}
@@ -500,8 +500,8 @@ func (c *Controller) evaluateEgress(netpolNamespace string, egressRules []networ
 			}
 
 			if peer.NamespaceSelector != nil || peer.PodSelector != nil {
-				if c.evaluateSelectors(peer.PodSelector, peer.NamespaceSelector, srcPod, netpolNamespace) {
-					klog.V(2).Infof("Pod %s/%s is allowed to connect because of Pod and Namespace selctors", srcPod.Name, srcPod.Namespace)
+				if c.evaluateSelectors(peer.PodSelector, peer.NamespaceSelector, dstPod, netpolNamespace) {
+					klog.V(2).Infof("Pod %s/%s is allowed to connect because of Pod and Namespace selectors", srcPod.Name, srcPod.Namespace)
 					return true
 				}
 			}
