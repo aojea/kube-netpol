@@ -415,21 +415,23 @@ func (c *Controller) validator(
 						// If namespaceSelector is also set, then the NetworkPolicyPeer as a whole selects
 						// the pods matching podSelector in the Namespaces selected by NamespaceSelector.
 						// Otherwise it selects the pods matching podSelector in the policy's own namespace.
-						podSelector, err := metav1.LabelSelectorAsSelector(peer.PodSelector)
-						if err != nil {
-							klog.Infof("Accepting packet, error: %v", err)
-							return true
-						}
-						// networkPolicy does not selects the pod
-						// try the next network policy
-						if !podSelector.Matches(labels.Set(dstPod.Labels)) {
-							klog.V(2).Infof("Pod %s/%s is not allowed to connect from %s/%s on NetworkPolicy %s/%s", dstPod.Name, dstPod.Namespace, srcPod.Name, srcPod.Namespace, netpol.Name, netpol.Namespace)
-							verdict = false
-							continue
-						}
-						if peer.NamespaceSelector == nil && dstPod.Namespace == netpol.Namespace {
-							klog.V(2).Infof("Pod %s/%s is allowed to connect from %s/%s on NetworkPolicy %s/%s", dstPod.Name, dstPod.Namespace, srcPod.Name, srcPod.Namespace, netpol.Name, netpol.Namespace)
-							return true
+						if peer.PodSelector != nil {
+							podSelector, err := metav1.LabelSelectorAsSelector(peer.PodSelector)
+							if err != nil {
+								klog.Infof("Accepting packet, error: %v", err)
+								return true
+							}
+							// networkPolicy does not selects the pod
+							// try the next network policy
+							if !podSelector.Matches(labels.Set(dstPod.Labels)) {
+								klog.V(2).Infof("Pod %s/%s is not allowed to connect from %s/%s on NetworkPolicy %s/%s", dstPod.Name, dstPod.Namespace, srcPod.Name, srcPod.Namespace, netpol.Name, netpol.Namespace)
+								verdict = false
+								continue
+							}
+							if peer.NamespaceSelector == nil && dstPod.Namespace == netpol.Namespace {
+								klog.V(2).Infof("Pod %s/%s is allowed to connect from %s/%s on NetworkPolicy %s/%s", dstPod.Name, dstPod.Namespace, srcPod.Name, srcPod.Namespace, netpol.Name, netpol.Namespace)
+								return true
+							}
 						}
 						// namespaceSelector selects namespaces using cluster-scoped labels. This field follows
 						// standard label selector semantics; if present but empty, it selects all namespaces.
@@ -437,29 +439,28 @@ func (c *Controller) validator(
 						// If podSelector is also set, then the NetworkPolicyPeer as a whole selects
 						// the pods matching podSelector in the namespaces selected by namespaceSelector.
 						// Otherwise it selects all pods in the namespaces selected by namespaceSelector.
-						nsSelector, err := metav1.LabelSelectorAsSelector(peer.NamespaceSelector)
-						if err != nil {
-							klog.Infof("Accepting packet, error: %v", err)
-							return true
-						}
-						if nsSelector == labels.Everything() {
-							klog.V(2).Infof("Pod %s/%s is allowed to connect from %s/%s on NetworkPolicy %s/%s", dstPod.Name, dstPod.Namespace, srcPod.Name, srcPod.Namespace, netpol.Name, netpol.Namespace)
-							return true
-						}
-						namespaces, err := c.namespaceLister.List(nsSelector)
-						if err != nil {
-							klog.Infof("Accepting packet, error: %v", err)
-							return true
-						}
-						for _, ns := range namespaces {
-							if dstPod.Namespace == ns.Name {
-								klog.V(2).Infof("Pod %s/%s is allowed to connect from %s/%s on NetworkPolicy %s/%s", dstPod.Name, dstPod.Namespace, srcPod.Name, srcPod.Namespace, netpol.Name, netpol.Namespace)
+						if peer.NamespaceSelector != nil {
+							nsSelector, err := metav1.LabelSelectorAsSelector(peer.NamespaceSelector)
+							if err != nil {
+								klog.Infof("Accepting packet, error: %v", err)
 								return true
 							}
+
+							namespaces, err := c.namespaceLister.List(nsSelector)
+							if err != nil {
+								klog.Infof("Accepting packet, error: %v", err)
+								return true
+							}
+							for _, ns := range namespaces {
+								if dstPod.Namespace == ns.Name {
+									klog.V(2).Infof("Pod %s/%s is allowed to connect from %s/%s on NetworkPolicy %s/%s", dstPod.Name, dstPod.Namespace, srcPod.Name, srcPod.Namespace, netpol.Name, netpol.Namespace)
+									return true
+								}
+							}
+							klog.V(2).Infof("Pod %s/%s is not allowed to connect from %s/%s on NetworkPolicy %s/%s", dstPod.Name, dstPod.Namespace, srcPod.Name, srcPod.Namespace, netpol.Name, netpol.Namespace)
+							verdict = false
+							continue
 						}
-						klog.V(2).Infof("Pod %s/%s is not allowed to connect from %s/%s on NetworkPolicy %s/%s", dstPod.Name, dstPod.Namespace, srcPod.Name, srcPod.Namespace, netpol.Name, netpol.Namespace)
-						verdict = false
-						continue
 					}
 				}
 			}
@@ -523,19 +524,21 @@ func (c *Controller) validator(
 						// If namespaceSelector is also set, then the NetworkPolicyPeer as a whole selects
 						// the pods matching podSelector in the Namespaces selected by NamespaceSelector.
 						// Otherwise it selects the pods matching podSelector in the policy's own namespace.
-						podSelector, err := metav1.LabelSelectorAsSelector(peer.PodSelector)
-						if err != nil {
-							klog.Infof("Accepting packet, error: %v", err)
-							return true
-						}
-						// networkPolicy does not selects the pod
-						// try the next network policy
-						if !podSelector.Matches(labels.Set(srcPod.Labels)) {
-							verdict = false
-							continue
-						}
-						if peer.NamespaceSelector == nil && srcPod.Namespace == netpol.Namespace {
-							return true
+						if peer.PodSelector != nil {
+							podSelector, err := metav1.LabelSelectorAsSelector(peer.PodSelector)
+							if err != nil {
+								klog.Infof("Accepting packet, error: %v", err)
+								return true
+							}
+							// networkPolicy does not selects the pod
+							// try the next network policy
+							if !podSelector.Matches(labels.Set(srcPod.Labels)) {
+								verdict = false
+								continue
+							}
+							if peer.NamespaceSelector == nil && srcPod.Namespace == netpol.Namespace {
+								return true
+							}
 						}
 						// namespaceSelector selects namespaces using cluster-scoped labels. This field follows
 						// standard label selector semantics; if present but empty, it selects all namespaces.
@@ -543,25 +546,25 @@ func (c *Controller) validator(
 						// If podSelector is also set, then the NetworkPolicyPeer as a whole selects
 						// the pods matching podSelector in the namespaces selected by namespaceSelector.
 						// Otherwise it selects all pods in the namespaces selected by namespaceSelector.
-						nsSelector, err := metav1.LabelSelectorAsSelector(peer.NamespaceSelector)
-						if err != nil {
-							klog.Infof("Accepting packet, error: %v", err)
-							return true
-						}
-						if nsSelector == labels.Everything() {
-							return true
-						}
-						namespaces, err := c.namespaceLister.List(nsSelector)
-						if err != nil {
-							klog.Infof("Accepting packet, error: %v", err)
-							return true
-						}
-						for _, ns := range namespaces {
-							if srcPod.Namespace == ns.Name {
+						if peer.NamespaceSelector != nil {
+							nsSelector, err := metav1.LabelSelectorAsSelector(peer.NamespaceSelector)
+							if err != nil {
+								klog.Infof("Accepting packet, error: %v", err)
 								return true
 							}
+
+							namespaces, err := c.namespaceLister.List(nsSelector)
+							if err != nil {
+								klog.Infof("Accepting packet, error: %v", err)
+								return true
+							}
+							for _, ns := range namespaces {
+								if srcPod.Namespace == ns.Name {
+									return true
+								}
+							}
+							verdict = false
 						}
-						verdict = false
 						continue
 					}
 				}

@@ -161,6 +161,28 @@ func TestSyncPacket(t *testing.T) {
 			}}
 		})
 
+	npMultiPortEgressIPBlock := makeNetworkPolicyCustom("multiport-egress", "foo",
+		func(networkPolicy *networkingv1.NetworkPolicy) {
+			networkPolicy.Spec.PodSelector = metav1.LabelSelector{MatchLabels: map[string]string{"a": "b"}}
+			networkPolicy.Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeEgress}
+			networkPolicy.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{{
+				To: []networkingv1.NetworkPolicyPeer{{
+					IPBlock: &networkingv1.IPBlock{CIDR: "192.168.0.0/16"},
+				}},
+			}}
+		})
+
+	npMultiPortEgressPodSelector := makeNetworkPolicyCustom("multiport-egress", "foo",
+		func(networkPolicy *networkingv1.NetworkPolicy) {
+			networkPolicy.Spec.PodSelector = metav1.LabelSelector{MatchLabels: map[string]string{"a": "b"}}
+			networkPolicy.Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeEgress}
+			networkPolicy.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{{
+				To: []networkingv1.NetworkPolicyPeer{{
+					PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"a": "b"}},
+				}},
+			}}
+		})
+
 	tests := []struct {
 		name          string
 		networkpolicy []*networkingv1.NetworkPolicy
@@ -263,6 +285,34 @@ func TestSyncPacket(t *testing.T) {
 				srcPort: 52345,
 				dstIP:   net.ParseIP("192.168.2.22"),
 				dstPort: 30080,
+				proto:   v1.ProtocolTCP,
+			},
+			expect: true,
+		},
+		{
+			name:          "multiport allow egress",
+			networkpolicy: []*networkingv1.NetworkPolicy{npMultiPortEgress, npMultiPortEgressIPBlock},
+			namespace:     []*v1.Namespace{makeNamespace("foo"), makeNamespace("bar")},
+			pod:           []*v1.Pod{podA, podB},
+			p: packet{
+				srcIP:   net.ParseIP("192.168.1.11"),
+				srcPort: 52345,
+				dstIP:   net.ParseIP("192.168.2.22"),
+				dstPort: 80,
+				proto:   v1.ProtocolTCP,
+			},
+			expect: true,
+		},
+		{
+			name:          "multiport allow egress",
+			networkpolicy: []*networkingv1.NetworkPolicy{npMultiPortEgress, npMultiPortEgressPodSelector},
+			namespace:     []*v1.Namespace{makeNamespace("foo"), makeNamespace("bar")},
+			pod:           []*v1.Pod{podA, podB},
+			p: packet{
+				srcIP:   net.ParseIP("192.168.1.11"),
+				srcPort: 52345,
+				dstIP:   net.ParseIP("192.168.2.22"),
+				dstPort: 80,
 				proto:   v1.ProtocolTCP,
 			},
 			expect: true,
