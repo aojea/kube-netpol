@@ -5,11 +5,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
-	"strconv"
 	"sync"
 	"time"
 
-	"github.com/coreos/go-iptables/iptables"
 	nfqueue "github.com/florianl/go-nfqueue"
 	"github.com/mdlayher/netlink"
 	"github.com/prometheus/client_golang/prometheus"
@@ -30,6 +28,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/knftables"
 )
 
 // Network policies are hard to implement efficiently and in large clusters this is translated to performance and
@@ -78,7 +77,7 @@ func NewController(client clientset.Interface,
 	networkpolicyInformer networkinginformers.NetworkPolicyInformer,
 	namespaceInformer coreinformers.NamespaceInformer,
 	podInformer coreinformers.PodInformer,
-	ipt *iptables.IPTables,
+	nft knftables.Interface,
 	nfqueueID int,
 ) *Controller {
 	klog.V(4).Info("Creating event broadcaster")
@@ -89,11 +88,10 @@ func NewController(client clientset.Interface,
 
 	c := &Controller{
 		client:    client,
-		ipt:       ipt,
+		nft:       nft,
 		nfqueueID: nfqueueID,
 	}
 
-	// TODO handle dual stack
 	podInformer.Informer().AddIndexers(cache.Indexers{
 		podIPIndex: func(obj interface{}) ([]string, error) {
 			pod, ok := obj.(*v1.Pod)
@@ -168,8 +166,8 @@ type Controller struct {
 	// function to get the Pod given an IP
 	// if an error or not found it returns nil
 	getPodAssignedToIP func(podIP string) *v1.Pod
-	// install the necessary iptables rules
-	ipt       *iptables.IPTables
+	// install the necessary nftables rules
+	nft       knftables.Interface
 	nfq       *nfqueue.Nfqueue
 	nfqueueID int
 }
@@ -192,10 +190,13 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 	registerMetrics()
 
 	// Start the workers after the repair loop to avoid races
-	klog.Info("Syncing iptables rules")
-	c.syncIptablesRules()
-	defer c.cleanIptablesRules()
-	go wait.Until(c.syncIptablesRules, 60*time.Second, ctx.Done())
+	klog.Info("Syncing nftables rules")
+	c.syncNFTablesRules(ctx)
+	defer c.cleanNFTablesRules(ctx)
+	// FIXME: there should be no need to ever resync our rules, but if we're going to
+	// do that, then knftables should provide us with an API to tell us when we need
+	// to resync (using `nft monitor` or direct netlink), rather than us polling.
+	go wait.Until(func () { c.syncNFTablesRules(ctx) }, 60*time.Second, ctx.Done())
 
 	// Set configuration options for nfqueue
 	config := nfqueue.Config{
@@ -232,8 +233,8 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 		} else {
 			c.nfq.SetVerdict(*a.PacketID, nfqueue.NfDrop)
 		}
-		histogramVec.WithLabelValues(string(packet.proto), string(c.ipt.Proto())).Observe(float64(time.Since(startTime).Microseconds()))
-		packetCounterVec.WithLabelValues(string(packet.proto), string(c.ipt.Proto())).Inc()
+		histogramVec.WithLabelValues(string(packet.proto), string(packet.family)).Observe(float64(time.Since(startTime).Microseconds()))
+		packetCounterVec.WithLabelValues(string(packet.proto), string(packet.family)).Inc()
 		klog.V(0).Infof("Finished syncing packet %d took %v result %v", *a.PacketID, time.Since(startTime), verdict)
 		return 0
 	}
@@ -258,29 +259,48 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 	return nil
 }
 
-// syncIptablesRules adds the necessary rules to process the first connection packets in userspace
+// syncNFTablesRules adds the necessary rules to process the first connection packets in userspace
 // and check if network policies must apply.
-// --queue-bypass is on other NFQUEUE option by Florian Westphal.
-// It change the behavior of a iptables rules when no userspace software is connected to the queue.
-// Instead of dropping packets, the packet are authorized if no software is listening to the queue.
 // TODO: We can divert only the traffic affected by network policies using a set in nftables or an IPset.
-func (c *Controller) syncIptablesRules() {
-	if err := c.ipt.InsertUnique("filter", "FORWARD", 1, "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", strconv.Itoa(c.nfqueueID)); err != nil {
-		klog.Infof("error syncing iptables rule %v", err)
+func (c *Controller) syncNFTablesRules(ctx context.Context) {
+	rule := fmt.Sprintf("ct state new  queue to %d", c.nfqueueID)
+
+	tx := c.nft.NewTransaction()
+	tx.Add(&knftables.Table{
+		Comment: knftables.PtrTo("rules for kubernetes NetworkPolicy"),
+	})
+
+	for _, hook := range []knftables.BaseChainHook{knftables.InputHook, knftables.ForwardHook, knftables.OutputHook} {
+		chainName := string(hook)
+		tx.Add(&knftables.Chain{
+			Name:     chainName,
+			Type:     knftables.PtrTo(knftables.FilterType),
+			Hook:     knftables.PtrTo(knftables.ForwardHook),
+			Priority: knftables.PtrTo(knftables.FilterPriority),
+		})
+		tx.Flush(&knftables.Chain{
+			Name: chainName,
+		})
+		tx.Add(&knftables.Rule{
+			Chain: chainName,
+			Rule:  rule,
+		})
 	}
 
-	if err := c.ipt.InsertUnique("filter", "OUTPUT", 1, "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", strconv.Itoa(c.nfqueueID)); err != nil {
-		klog.Infof("error syncing iptables rule %v", err)
+	if err := c.nft.Run(ctx, tx); err != nil {
+		klog.Infof("error syncing nftables rules %v", err)
 	}
 }
 
-func (c *Controller) cleanIptablesRules() {
-	if err := c.ipt.Delete("filter", "FORWARD", "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", strconv.Itoa(c.nfqueueID)); err != nil {
-		klog.Infof("error deleting iptables rule %v", err)
-	}
+func (c *Controller) cleanNFTablesRules(ctx context.Context) {
+	tx := c.nft.NewTransaction()
+	// Add+Delete is idempotent and won't return an error if the table doesn't already
+	// exist.
+	tx.Add(&knftables.Table{})
+	tx.Delete(&knftables.Table{})
 
-	if err := c.ipt.Delete("filter", "OUTPUT", "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", strconv.Itoa(c.nfqueueID)); err != nil {
-		klog.Infof("error deleting iptables rule %v", err)
+	if err := c.nft.Run(ctx, tx); err != nil {
+		klog.Infof("error deleting nftables rules %v", err)
 	}
 }
 
@@ -644,6 +664,7 @@ func (c *Controller) evaluatePorts(networkPolicyPorts []networkingv1.NetworkPoli
 }
 
 type packet struct {
+	family  v1.IPFamily
 	srcIP   net.IP
 	dstIP   net.IP
 	proto   v1.Protocol
@@ -670,6 +691,7 @@ func parsePacket(b []byte) (packet, error) {
 	protocol := -1
 	switch version {
 	case 4:
+		t.family = v1.IPv4Protocol
 		hdrlen = int(b[0]&0x0f) << 2
 		if len(b) < hdrlen+4 {
 			return t, fmt.Errorf("payload to short, received %d expected at least %d", len(b), hdrlen+4)
@@ -678,6 +700,7 @@ func parsePacket(b []byte) (packet, error) {
 		t.dstIP = net.IPv4(b[16], b[17], b[18], b[19])
 		protocol = int(b[9])
 	case 6:
+		t.family = v1.IPv6Protocol
 		hdrlen = 40
 		if len(b) < hdrlen+4 {
 			return t, fmt.Errorf("payload to short, received %d expected at least %d", len(b), hdrlen+4)
