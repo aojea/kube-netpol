@@ -32,17 +32,19 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// Network policies are hard to implement efficiently and in large clusters this is translated to performance and
-// scalability problems.
-// Most of the existing implementation use the same approach of processing the APIs and transforming them in the
-// corresponding dataplane implementation, commonly this may be iptables, nftables, ebpf or ovs.
-// This takes a different approach, it uses the NFQUEUE functionality implemented in netfilter to process
-// the first packet of each connection in userspace and emit a veredict. The advantages is that the dataplane
-// implementation does not need to represent all the complex logic.
-// There are also some performance improvements that can be applied, as to restrict the packets that are sent to
-// userspace to the ones that have network policies only.
-// This effectively means that network policies are applied ONLY at the time the connection is initatied
-// by whatever the conntrack kernel understand by NEW connection.
+// Network policies are hard to implement efficiently, and in large clusters this is
+// translated to performance and scalability problems. Most of the existing
+// implementations use the same approach of processing the APIs and transforming them in
+// the corresponding dataplane implementation; commonly this may be iptables, nftables,
+// ebpf or ovs. This takes a different approach, it uses the NFQUEUE functionality
+// implemented in netfilter to process the first packet of each connection in userspace
+// and emit a verdict. The advantage is that the dataplane implementation does not need to
+// represent all the complex logic. There are also some performance improvements that can
+// be applied, such as to restrict the packets that are sent to userspace to the ones that
+// have network policies only. This effectively means that network policies are applied
+// ONLY at the time the connection is initatied by whatever the conntrack kernel
+// understand by NEW connection.
+//
 // https://home.regit.org/netfilter-en/using-nfqueue-and-libnetfilter_queue/
 // https://netfilter.org/projects/libnetfilter_queue/doxygen/html/
 
