@@ -1,11 +1,9 @@
 package networkpolicy
 
 import (
-	"fmt"
 	"net"
 	"testing"
 
-	"github.com/coreos/go-iptables/iptables"
 	v1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,6 +14,7 @@ import (
 	"k8s.io/component-base/logs"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/knftables"
 )
 
 type netpolTweak func(networkPolicy *networkingv1.NetworkPolicy)
@@ -103,17 +102,14 @@ type networkpolicyController struct {
 }
 
 func newController() *networkpolicyController {
-	ipt, err := iptables.New()
-	if err != nil {
-		panic(fmt.Sprintf("New failed: %v", err))
-	}
+	nft := knftables.NewFake(knftables.InetFamily, "kube-netpol")
 	client := fake.NewSimpleClientset()
 	informersFactory := informers.NewSharedInformerFactory(client, 0)
 	controller := NewController(client,
 		informersFactory.Networking().V1().NetworkPolicies(),
 		informersFactory.Core().V1().Namespaces(),
 		informersFactory.Core().V1().Pods(),
-		ipt,
+		nft,
 		100,
 	)
 	controller.networkpoliciesSynced = alwaysReady
