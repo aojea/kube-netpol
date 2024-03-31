@@ -12,7 +12,7 @@ on:
 
 env:
   GO_VERSION: "1.22.0"
-  K8S_VERSION: "v1.29.2"
+  K8S_VERSION: "v1.29.3"
   KIND_VERSION: "v0.22.0"
   REGISTRY: ghcr.io
   IMAGE_NAME: aojea/kube-netpol
@@ -51,8 +51,14 @@ jobs:
     timeout-minutes: 100
     needs:
       - build
+    strategy:
+      fail-fast: false
+      matrix:
+        # TODO add "dual", waiting on KEP https://github.com/kubernetes/enhancements/tree/master/keps/sig-network/3705-cloud-node-ips
+        ipFamily: ["ipv4", "ipv6"]
     env:
-      JOB_NAME: "kube-netpol-e2e"
+      JOB_NAME: "kube-netpol-${{ matrix.ipFamily }}"
+      IP_FAMILY: ${{ matrix.ipFamily }}
     steps:
     - name: Check out code
       uses: actions/checkout@v2
@@ -93,7 +99,7 @@ jobs:
         kind: Cluster
         apiVersion: kind.x-k8s.io/v1alpha4
         networking:
-          ipFamily: ipv4
+          ipFamily: ${IP_FAMILY}
         nodes:
         - role: control-plane
         - role: worker
