@@ -8,7 +8,6 @@ import (
 	"os/signal"
 
 	"github.com/aojea/kube-netpol/pkg/networkpolicy"
-	"github.com/coreos/go-iptables/iptables"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sys/unix"
 
@@ -16,6 +15,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/knftables"
 )
 
 func main() {
@@ -50,45 +50,20 @@ func main() {
 	http.Handle("/metrics", promhttp.Handler())
 	go http.ListenAndServe(":9080", nil)
 
-	// Install iptables rule to handle IPv4 traffic
-	ipt4, err := iptables.NewWithProtocol(iptables.ProtocolIPv4)
-	if err == nil {
-		klog.Infof("Running on IPv4 mode")
-		networkPolicyController4 := networkpolicy.NewController(
-			clientset,
-			informersFactory.Networking().V1().NetworkPolicies(),
-			informersFactory.Core().V1().Namespaces(),
-			informersFactory.Core().V1().Pods(),
-			ipt4,
-			104,
-		)
-		go networkPolicyController4.Run(ctx, 5)
-	} else {
-		klog.Infof("Error running on IPv4 mode: %v", err)
-	}
-
-	/* TODO make this configurable, it can be ipv4, ipv6 or dual
-	ipt6, err := iptables.NewWithProtocol(iptables.ProtocolIPv6)
+	nft, err := knftables.New(knftables.InetFamily, "kube-netpol")
 	if err != nil {
-		log.Fatalf("Could not use iptables IPv6: %v", err)
+		klog.Fatalf("Error initializing nftables: %v", err)
 	}
-	*/
 
-	ipt6, err := iptables.NewWithProtocol(iptables.ProtocolIPv6)
-	if err == nil {
-		klog.Infof("Running on IPv6 mode")
-		networkPolicyController6 := networkpolicy.NewController(
-			clientset,
-			informersFactory.Networking().V1().NetworkPolicies(),
-			informersFactory.Core().V1().Namespaces(),
-			informersFactory.Core().V1().Pods(),
-			ipt6,
-			106,
-		)
-		go networkPolicyController6.Run(ctx, 5)
-	} else {
-		klog.Infof("Error running on IPv6 mode: %v", err)
-	}
+	networkPolicyController := networkpolicy.NewController(
+		clientset,
+		informersFactory.Networking().V1().NetworkPolicies(),
+		informersFactory.Core().V1().Namespaces(),
+		informersFactory.Core().V1().Pods(),
+		nft,
+		104,
+	)
+	go networkPolicyController.Run(ctx)
 
 	informersFactory.Start(ctx.Done())
 
