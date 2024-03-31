@@ -50,7 +50,7 @@ func main() {
 	http.Handle("/metrics", promhttp.Handler())
 	go http.ListenAndServe(":9080", nil)
 
-	// Install iptables rule to masquerade IPv4 NAT64 traffic
+	// Install iptables rule to handle IPv4 traffic
 	ipt4, err := iptables.NewWithProtocol(iptables.ProtocolIPv4)
 	if err == nil {
 		klog.Infof("Running on IPv4 mode")
