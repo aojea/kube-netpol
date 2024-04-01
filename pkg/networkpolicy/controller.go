@@ -264,7 +264,7 @@ func (c *Controller) Run(ctx context.Context) error {
 // and check if network policies must apply.
 // TODO: We can divert only the traffic affected by network policies using a set in nftables or an IPset.
 func (c *Controller) syncNFTablesRules(ctx context.Context) {
-	rule := fmt.Sprintf("ct state new  queue to %d", c.nfqueueID)
+	rule := fmt.Sprintf("ct state new queue to %d", c.nfqueueID)
 
 	tx := c.nft.NewTransaction()
 	tx.Add(&knftables.Table{
@@ -276,7 +276,7 @@ func (c *Controller) syncNFTablesRules(ctx context.Context) {
 		tx.Add(&knftables.Chain{
 			Name:     chainName,
 			Type:     knftables.PtrTo(knftables.FilterType),
-			Hook:     knftables.PtrTo(knftables.ForwardHook),
+			Hook:     knftables.PtrTo(hook),
 			Priority: knftables.PtrTo(knftables.FilterPriority),
 		})
 		tx.Flush(&knftables.Chain{
