@@ -14,6 +14,7 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -137,6 +138,15 @@ func NewController(client clientset.Interface,
 		// TODO: check multiple phases
 		return objs[0].(*v1.Pod)
 	}
+
+	// reduce memory usage only care about Labels and Status
+	trim := func(obj interface{}) (interface{}, error) {
+		if accessor, err := meta.Accessor(obj); err == nil {
+			accessor.SetManagedFields(nil)
+		}
+		return obj, nil
+	}
+	podInformer.Informer().SetTransform(trim)
 
 	c.podLister = podInformer.Lister()
 	c.podsSynced = podInformer.Informer().HasSynced
