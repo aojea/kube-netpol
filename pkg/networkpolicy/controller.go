@@ -205,7 +205,7 @@ func (c *Controller) Run(ctx context.Context) error {
 		MaxPacketLen: 128, // only interested in the headers
 		MaxQueueLen:  1024,
 		Copymode:     nfqueue.NfQnlCopyPacket, // headers
-		// WriteTimeout: 500 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
 	}
 
 	nf, err := nfqueue.Open(&config)
