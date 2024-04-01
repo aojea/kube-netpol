@@ -193,7 +193,7 @@ func (c *Controller) Run(ctx context.Context) error {
 
 	klog.Info("Syncing nftables rules")
 	c.syncNFTablesRules(ctx)
-	defer c.cleanNFTablesRules(ctx)
+	defer c.cleanNFTablesRules()
 	// FIXME: there should be no need to ever resync our rules, but if we're going to
 	// do that, then knftables should provide us with an API to tell us when we need
 	// to resync (using `nft monitor` or direct netlink), rather than us polling.
@@ -293,14 +293,14 @@ func (c *Controller) syncNFTablesRules(ctx context.Context) {
 	}
 }
 
-func (c *Controller) cleanNFTablesRules(ctx context.Context) {
+func (c *Controller) cleanNFTablesRules() {
 	tx := c.nft.NewTransaction()
 	// Add+Delete is idempotent and won't return an error if the table doesn't already
 	// exist.
 	tx.Add(&knftables.Table{})
 	tx.Delete(&knftables.Table{})
 
-	if err := c.nft.Run(ctx, tx); err != nil {
+	if err := c.nft.Run(context.TODO(), tx); err != nil {
 		klog.Infof("error deleting nftables rules %v", err)
 	}
 }
