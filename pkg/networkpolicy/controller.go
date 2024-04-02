@@ -171,7 +171,7 @@ func (c *Controller) Run(ctx context.Context) error {
 	}
 
 	// add metrics
-	registerMetrics()
+	registerMetrics(ctx)
 
 	klog.Info("Syncing nftables rules")
 	c.syncNFTablesRules(ctx)
