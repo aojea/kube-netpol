@@ -5,12 +5,10 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
-	"sync"
 	"time"
 
 	nfqueue "github.com/florianl/go-nfqueue"
 	"github.com/mdlayher/netlink"
-	"github.com/prometheus/client_golang/prometheus"
 
 	v1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -53,26 +51,9 @@ const (
 	podIPIndex     = "podIPKeyIndex"
 )
 
-var (
-	histogramVec = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name: "packet_process_time",
-		Help: "Time it has taken to process each packet (microseconds)",
-	}, []string{"protocol", "family"})
-
-	packetCounterVec = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "packet_count",
-		Help: "Number of packets",
-	}, []string{"protocol", "family"})
-)
-
-var registerMetricsOnce sync.Once
-
-// RegisterMetrics registers kube-proxy metrics.
-func registerMetrics() {
-	registerMetricsOnce.Do(func() {
-		prometheus.Register(histogramVec)
-		prometheus.Register(packetCounterVec)
-	})
+type Config struct {
+	FailOpen bool // allow traffic if the controller is not available
+	QueueID  int
 }
 
 // NewController returns a new *Controller.
@@ -81,7 +62,7 @@ func NewController(client clientset.Interface,
 	namespaceInformer coreinformers.NamespaceInformer,
 	podInformer coreinformers.PodInformer,
 	nft knftables.Interface,
-	nfqueueID int,
+	config Config,
 ) *Controller {
 	klog.V(4).Info("Creating event broadcaster")
 	broadcaster := record.NewBroadcaster()
@@ -90,9 +71,9 @@ func NewController(client clientset.Interface,
 	recorder := broadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: controllerName})
 
 	c := &Controller{
-		client:    client,
-		nft:       nft,
-		nfqueueID: nfqueueID,
+		client: client,
+		nft:    nft,
+		config: config,
 	}
 
 	podInformer.Informer().AddIndexers(cache.Indexers{
@@ -163,6 +144,8 @@ func NewController(client clientset.Interface,
 
 // Controller manages selector-based networkpolicy endpoints.
 type Controller struct {
+	config Config
+
 	client           clientset.Interface
 	eventBroadcaster record.EventBroadcaster
 	eventRecorder    record.EventRecorder
@@ -179,9 +162,8 @@ type Controller struct {
 	// if an error or not found it returns nil
 	getPodAssignedToIP func(podIP string) *v1.Pod
 	// install the necessary nftables rules
-	nft       knftables.Interface
-	nfq       *nfqueue.Nfqueue
-	nfqueueID int
+	nft knftables.Interface
+	nfq *nfqueue.Nfqueue
 }
 
 // Run will not return until stopCh is closed. workers determines how many
@@ -199,7 +181,7 @@ func (c *Controller) Run(ctx context.Context) error {
 	}
 
 	// add metrics
-	registerMetrics()
+	registerMetrics(ctx)
 
 	klog.Info("Syncing nftables rules")
 	c.syncNFTablesRules(ctx)
@@ -211,7 +193,7 @@ func (c *Controller) Run(ctx context.Context) error {
 
 	// Set configuration options for nfqueue
 	config := nfqueue.Config{
-		NfQueue:      uint16(c.nfqueueID),
+		NfQueue:      uint16(c.config.QueueID),
 		MaxPacketLen: 128, // only interested in the headers
 		MaxQueueLen:  1024,
 		Copymode:     nfqueue.NfQnlCopyPacket, // headers
@@ -274,14 +256,16 @@ func (c *Controller) Run(ctx context.Context) error {
 // and check if network policies must apply.
 // TODO: We can divert only the traffic affected by network policies using a set in nftables or an IPset.
 func (c *Controller) syncNFTablesRules(ctx context.Context) {
-	rule := fmt.Sprintf("ct state new queue to %d", c.nfqueueID)
-
+	rule := fmt.Sprintf("ct state new queue to %d", c.config.QueueID)
+	if c.config.FailOpen {
+		rule = rule + " bypass"
+	}
 	tx := c.nft.NewTransaction()
 	tx.Add(&knftables.Table{
 		Comment: knftables.PtrTo("rules for kubernetes NetworkPolicy"),
 	})
 
-	for _, hook := range []knftables.BaseChainHook{knftables.InputHook, knftables.ForwardHook, knftables.OutputHook} {
+	for _, hook := range []knftables.BaseChainHook{knftables.ForwardHook} {
 		chainName := string(hook)
 		tx.Add(&knftables.Chain{
 			Name:     chainName,
