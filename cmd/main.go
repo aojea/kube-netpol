@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,10 +19,30 @@ import (
 	"sigs.k8s.io/knftables"
 )
 
+var (
+	failOpen bool
+	queueID  int
+)
+
+func init() {
+	flag.BoolVar(&failOpen, "fail-open", false, "If set, don't drop packets if the controller is not running (default false)")
+	flag.IntVar(&queueID, "nfqueue-id", 100, "Number of the nfqueue used (default 100)")
+
+	flag.Usage = func() {
+		fmt.Fprint(os.Stderr, "Usage: kube-netpol [options]\n\n")
+		flag.PrintDefaults()
+	}
+}
+
 func main() {
 	// enable logging
 	klog.InitFlags(nil)
 	flag.Parse()
+	//
+	cfg := networkpolicy.Config{
+		FailOpen: failOpen,
+		QueueID:  queueID,
+	}
 	// creates the in-cluster config
 	config, err := rest.InClusterConfig()
 	if err != nil {
@@ -61,7 +82,7 @@ func main() {
 		informersFactory.Core().V1().Namespaces(),
 		informersFactory.Core().V1().Pods(),
 		nft,
-		104,
+		cfg,
 	)
 	go networkPolicyController.Run(ctx)
 
