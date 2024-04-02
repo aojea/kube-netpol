@@ -271,7 +271,7 @@ func (c *Controller) syncNFTablesRules(ctx context.Context) {
 		Comment: knftables.PtrTo("rules for kubernetes NetworkPolicy"),
 	})
 
-	for _, hook := range []knftables.BaseChainHook{knftables.ForwardHook, knftables.OutputHook} {
+	for _, hook := range []knftables.BaseChainHook{knftables.ForwardHook} {
 		chainName := string(hook)
 		tx.Add(&knftables.Chain{
 			Name:     chainName,
