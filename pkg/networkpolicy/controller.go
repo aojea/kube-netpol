@@ -162,8 +162,9 @@ type Controller struct {
 	// if an error or not found it returns nil
 	getPodAssignedToIP func(podIP string) *v1.Pod
 	// install the necessary nftables rules
-	nft knftables.Interface
-	nfq *nfqueue.Nfqueue
+	nft     knftables.Interface
+	nfq     *nfqueue.Nfqueue
+	flushed bool
 }
 
 // Run will not return until stopCh is closed. workers determines how many
@@ -260,10 +261,17 @@ func (c *Controller) syncNFTablesRules(ctx context.Context) {
 	if c.config.FailOpen {
 		rule = rule + " bypass"
 	}
-	tx := c.nft.NewTransaction()
-	tx.Add(&knftables.Table{
+	table := &knftables.Table{
 		Comment: knftables.PtrTo("rules for kubernetes NetworkPolicy"),
-	})
+	}
+	tx := c.nft.NewTransaction()
+	// do it once to delete the existing table
+	if !c.flushed {
+		tx.Add(table)
+		tx.Delete(table)
+		c.flushed = true
+	}
+	tx.Add(table)
 
 	for _, hook := range []knftables.BaseChainHook{knftables.ForwardHook} {
 		chainName := string(hook)
