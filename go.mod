@@ -3,6 +3,7 @@ module github.com/aojea/kube-netpol
 go 1.22.0
 
 require (
+	github.com/coreos/go-iptables v0.7.0
 	github.com/florianl/go-nfqueue v1.3.1
 	github.com/mdlayher/netlink v1.6.0
 	github.com/prometheus/client_golang v1.19.0
