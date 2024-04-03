@@ -271,7 +271,7 @@ func (c *Controller) syncNFTablesRules(ctx context.Context) {
 			Name:     chainName,
 			Type:     knftables.PtrTo(knftables.FilterType),
 			Hook:     knftables.PtrTo(hook),
-			Priority: knftables.PtrTo(knftables.FilterPriority),
+			Priority: knftables.PtrTo(knftables.FilterPriority + "-5"),
 		})
 		tx.Flush(&knftables.Chain{
 			Name: chainName,
