@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os/exec"
@@ -285,7 +286,7 @@ func (c *Controller) Run(ctx context.Context) error {
 		}
 		histogramVec.WithLabelValues(string(packet.proto), string(packet.family)).Observe(float64(time.Since(startTime).Microseconds()))
 		packetCounterVec.WithLabelValues(string(packet.proto), string(packet.family)).Inc()
-		klog.V(0).Infof("Finished syncing packet %d took %v result %v", *a.PacketID, time.Since(startTime), verdict)
+		klog.V(0).Infof("Finished syncing packet %d took: %v accepted: %v", *a.PacketID, time.Since(startTime), verdict)
 		return 0
 	}
 
@@ -406,12 +407,12 @@ func (c *Controller) acceptPacket(p packet) bool {
 	srcPodNetworkPolices := c.getNetworkPoliciesForPod(srcPod)
 	dstPodNetworkPolices := c.getNetworkPoliciesForPod(dstPod)
 
-	msg := fmt.Sprintf("checking packet %s\n", p.String())
+	msg := fmt.Sprintf("checking packet %s:", p.String())
 	if srcPod != nil {
-		msg = msg + fmt.Sprintf("\tSrcPod (%s/%s) %d network policies\n", srcPod.Name, srcPod.Namespace, len(srcPodNetworkPolices))
+		msg = msg + fmt.Sprintf(" SrcPod (%s/%s): %d NetworkPolicy", srcPod.Name, srcPod.Namespace, len(srcPodNetworkPolices))
 	}
 	if dstPod != nil {
-		msg = msg + fmt.Sprintf("\tDstPod (%s/%s) %d network policies\n", dstPod.Name, dstPod.Namespace, len(dstPodNetworkPolices))
+		msg = msg + fmt.Sprintf(" DstPod (%s/%s): %d NetworkPolicy", dstPod.Name, dstPod.Namespace, len(dstPodNetworkPolices))
 	}
 	klog.V(2).Infof("%s", msg)
 
@@ -753,7 +754,7 @@ type packet struct {
 }
 
 func (p packet) String() string {
-	return fmt.Sprintf("%s:%d %s:%d %s :: %s", p.srcIP.String(), p.srcPort, p.dstIP.String(), p.dstPort, p.proto, string(p.payload))
+	return fmt.Sprintf("%s:%d %s:%d %s :: %s", p.srcIP.String(), p.srcPort, p.dstIP.String(), p.dstPort, p.proto, hex.Dump(p.payload))
 }
 
 // https://en.wikipedia.org/wiki/Internet_Protocol_version_4#Packet_structure
