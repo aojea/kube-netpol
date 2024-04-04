@@ -1,12 +1,17 @@
 package networkpolicy
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
 	"net"
+	"os/exec"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/coreos/go-iptables/iptables"
 	nfqueue "github.com/florianl/go-nfqueue"
 	"github.com/mdlayher/netlink"
 
@@ -56,12 +61,31 @@ type Config struct {
 	QueueID  int
 }
 
+// detect if the system uses iptables legacy
+func iptablesLegacy() bool {
+	// only support IPv4 with iptables for simplicity
+	path, err := exec.LookPath("iptables")
+	if err != nil {
+		return false
+	}
+	cmd := exec.Command(path, "--version")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	err = cmd.Run()
+	if err != nil {
+		return false
+	}
+	if strings.Contains(out.String(), "legacy") {
+		return true
+	}
+	return false
+}
+
 // NewController returns a new *Controller.
 func NewController(client clientset.Interface,
 	networkpolicyInformer networkinginformers.NetworkPolicyInformer,
 	namespaceInformer coreinformers.NamespaceInformer,
 	podInformer coreinformers.PodInformer,
-	nft knftables.Interface,
 	config Config,
 ) *Controller {
 	klog.V(4).Info("Creating event broadcaster")
@@ -72,8 +96,31 @@ func NewController(client clientset.Interface,
 
 	c := &Controller{
 		client: client,
-		nft:    nft,
 		config: config,
+	}
+
+	if iptablesLegacy() {
+		ipt, err := iptables.NewWithProtocol(iptables.ProtocolIPv4)
+		if err != nil {
+			klog.Fatalf("Error creating iptables: %v", err)
+		}
+		klog.Infof("Using iptables legacy")
+		c.ipt = ipt
+	} else {
+		nft, err := knftables.New(knftables.InetFamily, "kube-netpol")
+		if err != nil {
+			klog.Infof("Error initializing nftables: %v", err)
+			ipt, err := iptables.NewWithProtocol(iptables.ProtocolIPv4)
+			if err != nil {
+				klog.Fatalf("Error creating iptables: %v", err)
+			}
+			klog.Infof("Using iptables")
+			c.ipt = ipt
+		} else {
+			klog.Infof("Using nftables")
+			c.nft = nft
+		}
+
 	}
 
 	podInformer.Informer().AddIndexers(cache.Indexers{
@@ -161,8 +208,9 @@ type Controller struct {
 	// function to get the Pod given an IP
 	// if an error or not found it returns nil
 	getPodAssignedToIP func(podIP string) *v1.Pod
-	// install the necessary nftables rules
-	nft     knftables.Interface
+
+	nft     knftables.Interface // install the necessary nftables rules
+	ipt     *iptables.IPTables  // on old systems we need to support iptables
 	nfq     *nfqueue.Nfqueue
 	flushed bool
 }
@@ -184,13 +232,21 @@ func (c *Controller) Run(ctx context.Context) error {
 	// add metrics
 	registerMetrics(ctx)
 
-	klog.Info("Syncing nftables rules")
-	c.syncNFTablesRules(ctx)
-	defer c.cleanNFTablesRules()
-	// FIXME: there should be no need to ever resync our rules, but if we're going to
-	// do that, then knftables should provide us with an API to tell us when we need
-	// to resync (using `nft monitor` or direct netlink), rather than us polling.
-	go wait.Until(func() { c.syncNFTablesRules(ctx) }, 60*time.Second, ctx.Done())
+	if c.ipt != nil {
+		// Start the workers after the repair loop to avoid races
+		klog.Info("Syncing iptables rules")
+		c.syncIptablesRules()
+		defer c.cleanIptablesRules()
+		go wait.Until(c.syncIptablesRules, 60*time.Second, ctx.Done())
+	} else {
+		klog.Info("Syncing nftables rules")
+		c.syncNFTablesRules(ctx)
+		defer c.cleanNFTablesRules()
+		// FIXME: there should be no need to ever resync our rules, but if we're going to
+		// do that, then knftables should provide us with an API to tell us when we need
+		// to resync (using `nft monitor` or direct netlink), rather than us polling.
+		go wait.Until(func() { c.syncNFTablesRules(ctx) }, 60*time.Second, ctx.Done())
+	}
 
 	// Set configuration options for nfqueue
 	config := nfqueue.Config{
@@ -304,6 +360,26 @@ func (c *Controller) cleanNFTablesRules() {
 
 	if err := c.nft.Run(context.TODO(), tx); err != nil {
 		klog.Infof("error deleting nftables rules %v", err)
+	}
+}
+
+func (c *Controller) syncIptablesRules() {
+	if err := c.ipt.InsertUnique("filter", "FORWARD", 1, "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", strconv.Itoa(c.config.QueueID)); err != nil {
+		klog.Infof("error syncing iptables rule %v", err)
+	}
+
+	if err := c.ipt.InsertUnique("filter", "OUTPUT", 1, "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", strconv.Itoa(c.config.QueueID)); err != nil {
+		klog.Infof("error syncing iptables rule %v", err)
+	}
+}
+
+func (c *Controller) cleanIptablesRules() {
+	if err := c.ipt.Delete("filter", "FORWARD", "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", strconv.Itoa(c.config.QueueID)); err != nil {
+		klog.Infof("error deleting iptables rule %v", err)
+	}
+
+	if err := c.ipt.Delete("filter", "OUTPUT", "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", strconv.Itoa(c.config.QueueID)); err != nil {
+		klog.Infof("error deleting iptables rule %v", err)
 	}
 }
 

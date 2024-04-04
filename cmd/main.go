@@ -16,7 +16,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
-	"sigs.k8s.io/knftables"
 )
 
 var (
@@ -71,17 +70,11 @@ func main() {
 	http.Handle("/metrics", promhttp.Handler())
 	go http.ListenAndServe(":9080", nil)
 
-	nft, err := knftables.New(knftables.InetFamily, "kube-netpol")
-	if err != nil {
-		klog.Fatalf("Error initializing nftables: %v", err)
-	}
-
 	networkPolicyController := networkpolicy.NewController(
 		clientset,
 		informersFactory.Networking().V1().NetworkPolicies(),
 		informersFactory.Core().V1().Namespaces(),
 		informersFactory.Core().V1().Pods(),
-		nft,
 		cfg,
 	)
 	go networkPolicyController.Run(ctx)
