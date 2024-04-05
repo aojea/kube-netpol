@@ -365,21 +365,31 @@ func (c *Controller) cleanNFTablesRules() {
 }
 
 func (c *Controller) syncIptablesRules() {
-	if err := c.ipt.InsertUnique("filter", "FORWARD", 1, "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", strconv.Itoa(c.config.QueueID)); err != nil {
+	queueRule := []string{"-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-num", strconv.Itoa(c.config.QueueID)}
+	if c.config.FailOpen {
+		queueRule = append(queueRule, "--queue-bypass")
+	}
+
+	if err := c.ipt.InsertUnique("filter", "FORWARD", 1, queueRule...); err != nil {
 		klog.Infof("error syncing iptables rule %v", err)
 	}
 
-	if err := c.ipt.InsertUnique("filter", "OUTPUT", 1, "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", strconv.Itoa(c.config.QueueID)); err != nil {
+	if err := c.ipt.InsertUnique("filter", "OUTPUT", 1, queueRule...); err != nil {
 		klog.Infof("error syncing iptables rule %v", err)
 	}
 }
 
 func (c *Controller) cleanIptablesRules() {
-	if err := c.ipt.Delete("filter", "FORWARD", "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", strconv.Itoa(c.config.QueueID)); err != nil {
+	queueRule := []string{"-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-num", strconv.Itoa(c.config.QueueID)}
+	if c.config.FailOpen {
+		queueRule = append(queueRule, "--queue-bypass")
+	}
+
+	if err := c.ipt.Delete("filter", "FORWARD", queueRule...); err != nil {
 		klog.Infof("error deleting iptables rule %v", err)
 	}
 
-	if err := c.ipt.Delete("filter", "OUTPUT", "-m", "conntrack", "--ctstate", "NEW", "-j", "NFQUEUE", "--queue-bypass", "--queue-num", strconv.Itoa(c.config.QueueID)); err != nil {
+	if err := c.ipt.Delete("filter", "OUTPUT", queueRule...); err != nil {
 		klog.Infof("error deleting iptables rule %v", err)
 	}
 }
