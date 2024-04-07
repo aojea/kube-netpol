@@ -255,6 +255,9 @@ func (c *Controller) Run(ctx context.Context) error {
 	// Normalization is expensive, so this flag should always be set.
 	var flags uint32
 	flags = nfqueue.NfQaCfgFlagGSO
+	if c.config.FailOpen {
+		flags += nfqueue.NfQaCfgFlagFailOpen
+	}
 
 	// Set configuration options for nfqueue
 	config := nfqueue.Config{
