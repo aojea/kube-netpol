@@ -14,7 +14,6 @@ import (
 	"k8s.io/component-base/logs"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
-	"sigs.k8s.io/knftables"
 )
 
 type netpolTweak func(networkPolicy *networkingv1.NetworkPolicy)
@@ -102,15 +101,13 @@ type networkpolicyController struct {
 }
 
 func newController() *networkpolicyController {
-	nft := knftables.NewFake(knftables.InetFamily, "kube-netpol")
 	client := fake.NewSimpleClientset()
 	informersFactory := informers.NewSharedInformerFactory(client, 0)
 	controller := NewController(client,
 		informersFactory.Networking().V1().NetworkPolicies(),
 		informersFactory.Core().V1().Namespaces(),
 		informersFactory.Core().V1().Pods(),
-		nft,
-		100,
+		Config{},
 	)
 	controller.networkpoliciesSynced = alwaysReady
 	controller.namespacesSynced = alwaysReady
