@@ -249,9 +249,20 @@ func (c *Controller) Run(ctx context.Context) error {
 		go wait.Until(func() { c.syncNFTablesRules(ctx) }, 60*time.Second, ctx.Done())
 	}
 
+	// https://netfilter.org/projects/libnetfilter_queue/doxygen/html/group__Queue.html
+	// the kernel will not normalize offload packets,
+	// i.e. your application will need to be able to handle packets larger than the mtu.
+	// Normalization is expensive, so this flag should always be set.
+	var flags uint32
+	flags = nfqueue.NfQaCfgFlagGSO
+	if c.config.FailOpen {
+		flags += nfqueue.NfQaCfgFlagFailOpen
+	}
+
 	// Set configuration options for nfqueue
 	config := nfqueue.Config{
 		NfQueue:      uint16(c.config.QueueID),
+		Flags:        flags,
 		MaxPacketLen: 128, // only interested in the headers
 		MaxQueueLen:  1024,
 		Copymode:     nfqueue.NfQnlCopyPacket, // headers
