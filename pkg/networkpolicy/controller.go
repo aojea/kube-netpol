@@ -328,7 +328,7 @@ func (c *Controller) Run(ctx context.Context) error {
 // and check if network policies must apply.
 // TODO: We can divert only the traffic affected by network policies using a set in nftables or an IPset.
 func (c *Controller) syncNFTablesRules(ctx context.Context) {
-	rule := fmt.Sprintf("ct state new queue to %d", c.config.QueueID)
+	rule := fmt.Sprintf("ip protocol { tcp, udp, sctp } ct state new queue to %d", c.config.QueueID)
 	if c.config.FailOpen {
 		rule = rule + " bypass"
 	}
