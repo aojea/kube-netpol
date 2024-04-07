@@ -249,11 +249,14 @@ func (c *Controller) Run(ctx context.Context) error {
 		go wait.Until(func() { c.syncNFTablesRules(ctx) }, 60*time.Second, ctx.Done())
 	}
 
+	var flags uint32
 	// https://netfilter.org/projects/libnetfilter_queue/doxygen/html/group__Queue.html
 	// the kernel will not normalize offload packets,
 	// i.e. your application will need to be able to handle packets larger than the mtu.
 	// Normalization is expensive, so this flag should always be set.
-	var flags uint32
+	// This also solves a bug with SCTP
+	// https://github.com/aojea/kube-netpol/issues/8
+	// https://bugzilla.netfilter.org/show_bug.cgi?id=1742
 	flags = nfqueue.NfQaCfgFlagGSO
 	if c.config.FailOpen {
 		flags += nfqueue.NfQaCfgFlagFailOpen
