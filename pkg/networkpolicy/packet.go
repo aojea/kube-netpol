@@ -23,6 +23,14 @@ func (p packet) String() string {
 	return fmt.Sprintf("%s:%d %s:%d %s :: %s", p.srcIP.String(), p.srcPort, p.dstIP.String(), p.dstPort, p.proto, hex.Dump(p.payload))
 }
 
+// simply heuristic to detect dns just by checking if  port number is 53
+func (p packet) isDNS() bool {
+	if p.srcPort == 53 || p.dstPort == 53 {
+		return true
+	}
+	return false
+}
+
 // https://en.wikipedia.org/wiki/Internet_Protocol_version_4#Packet_structure
 // https://en.wikipedia.org/wiki/IPv6_packet
 // https://github.com/golang/net/blob/master/ipv4/header.go
