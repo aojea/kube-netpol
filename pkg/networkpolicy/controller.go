@@ -385,10 +385,6 @@ func (c *Controller) syncIptablesRules() {
 	if err := c.ipt.InsertUnique("filter", "FORWARD", 1, queueRule...); err != nil {
 		klog.Infof("error syncing iptables rule %v", err)
 	}
-
-	if err := c.ipt.InsertUnique("filter", "OUTPUT", 1, queueRule...); err != nil {
-		klog.Infof("error syncing iptables rule %v", err)
-	}
 }
 
 func (c *Controller) cleanIptablesRules() {
@@ -398,10 +394,6 @@ func (c *Controller) cleanIptablesRules() {
 	}
 
 	if err := c.ipt.Delete("filter", "FORWARD", queueRule...); err != nil {
-		klog.Infof("error deleting iptables rule %v", err)
-	}
-
-	if err := c.ipt.Delete("filter", "OUTPUT", queueRule...); err != nil {
 		klog.Infof("error deleting iptables rule %v", err)
 	}
 }
