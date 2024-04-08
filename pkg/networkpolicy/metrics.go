@@ -18,8 +18,9 @@ import (
 
 var (
 	histogramVec = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name: "packet_process_time",
-		Help: "Time it has taken to process each packet (microseconds)",
+		Name:    "packet_process_time",
+		Help:    "Time it has taken to process each packet (microseconds)",
+		Buckets: []float64{1, 10, 50, 200, 500, 750, 1000, 2000, 5000, 10000, 100000},
 	}, []string{"protocol", "family"})
 
 	packetCounterVec = prometheus.NewCounterVec(prometheus.CounterOpts{
