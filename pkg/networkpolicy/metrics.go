@@ -9,10 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 )
 
@@ -42,7 +40,7 @@ var (
 	}, []string{"queue"})
 	nfqueuePacketID = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "nfqueue_packet_id",
-		Help: " ID of the most recent packet queued.",
+		Help: "ID of the most recent packet queued.",
 	}, []string{"queue"})
 )
 
@@ -58,23 +56,6 @@ func registerMetrics(ctx context.Context) {
 		prometheus.Register(nfqueueQueueDropped)
 		prometheus.Register(nfqueueUserDropped)
 		prometheus.Register(nfqueuePacketID)
-		// collect metrics periodically
-		go wait.UntilWithContext(ctx, func(ctx context.Context) {
-			queues, err := readNfnetlinkQueueStats()
-			if err != nil {
-				klog.Infof("error reading nfqueue stats: %v", err)
-				return
-			}
-			klog.V(4).Infof("Registering metrics")
-			for _, q := range queues {
-				klog.V(4).Infof("Updating metrics for queue: %d", q.id_sequence)
-				nfqueueQueueTotal.WithLabelValues(q.queue_number).Set(float64(q.queue_total))
-				nfqueueQueueDropped.WithLabelValues(q.queue_number).Set(float64(q.queue_dropped))
-				nfqueueUserDropped.WithLabelValues(q.queue_number).Set(float64(q.user_dropped))
-				nfqueuePacketID.WithLabelValues(q.queue_number).Set(float64(q.id_sequence))
-			}
-
-		}, 30*time.Second)
 	})
 }
 

@@ -230,6 +230,23 @@ func (c *Controller) Run(ctx context.Context) error {
 
 	// add metrics
 	registerMetrics(ctx)
+	// collect metrics periodically
+	go wait.UntilWithContext(ctx, func(ctx context.Context) {
+		queues, err := readNfnetlinkQueueStats()
+		if err != nil {
+			klog.Infof("error reading nfqueue stats: %v", err)
+			return
+		}
+		klog.V(4).Infof("Obtained metrics for %d queues", len(queues))
+		for _, q := range queues {
+			klog.V(4).Infof("Updating metrics for queue: %d", q.id_sequence)
+			nfqueueQueueTotal.WithLabelValues(q.queue_number).Set(float64(q.queue_total))
+			nfqueueQueueDropped.WithLabelValues(q.queue_number).Set(float64(q.queue_dropped))
+			nfqueueUserDropped.WithLabelValues(q.queue_number).Set(float64(q.user_dropped))
+			nfqueuePacketID.WithLabelValues(q.queue_number).Set(float64(q.id_sequence))
+		}
+
+	}, 30*time.Second)
 
 	if c.ipt != nil {
 		// Start the workers after the repair loop to avoid races
