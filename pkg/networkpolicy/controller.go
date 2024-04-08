@@ -382,7 +382,13 @@ func (c *Controller) syncIptablesRules() {
 		queueRule = append(queueRule, "--queue-bypass")
 	}
 
-	if err := c.ipt.InsertUnique("filter", "FORWARD", 1, queueRule...); err != nil {
+	// kube-proxy install the reject rules for Services with Endpoints on the FORWARD hook
+	// nfqueue either accepts or drops https://netfilter-devel.vger.kernel.narkive.com/dGk9ZPzK/nfqueue-target-with-treat-accept-as-continue
+	// We can append the rule after the kube-proxy ones, but that will always depend on the order of the components
+	// to be installed so it will be racy.
+	// Since nftables does not seem to have that problem and we only offer iptables-legacy for backwards compatibility
+	// use the mangle table that happens before for filtering.
+	if err := c.ipt.InsertUnique("mangle", "FORWARD", 1, queueRule...); err != nil {
 		klog.Infof("error syncing iptables rule %v", err)
 	}
 }
@@ -393,7 +399,7 @@ func (c *Controller) cleanIptablesRules() {
 		queueRule = append(queueRule, "--queue-bypass")
 	}
 
-	if err := c.ipt.Delete("filter", "FORWARD", queueRule...); err != nil {
+	if err := c.ipt.Delete("mangle", "FORWARD", queueRule...); err != nil {
 		klog.Infof("error deleting iptables rule %v", err)
 	}
 }
