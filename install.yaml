@@ -2,7 +2,7 @@
 kind: ClusterRole
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-  name: kube-netpol
+  name: kube-network-policies
 rules:
   - apiGroups:
       - ""
@@ -23,49 +23,52 @@ rules:
 kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-  name: kube-netpol
+  name: kube-network-policies
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: kube-netpol
+  name: kube-network-policies
 subjects:
 - kind: ServiceAccount
-  name: kube-netpol
+  name: kube-network-policies
   namespace: kube-system
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: kube-netpol
+  name: kube-network-policies
   namespace: kube-system
 ---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: kube-netpol
+  name: kube-network-policies
   namespace: kube-system
   labels:
     tier: node
-    app: kube-netpol
-    k8s-app: kube-netpol
+    app: kube-network-policies
+    k8s-app: kube-network-policies
 spec:
   selector:
     matchLabels:
-      app: kube-netpol
+      app: kube-network-policies
   template:
     metadata:
       labels:
         tier: node
-        app: kube-netpol
-        k8s-app: kube-netpol
+        app: kube-network-policies
+        k8s-app: kube-network-policies
     spec:
       hostNetwork: true
+      dnsPolicy: ClusterFirst
+      nodeSelector:
+        kubernetes.io/os: linux
       tolerations:
       - operator: Exists
         effect: NoSchedule
-      serviceAccountName: kube-netpol
+      serviceAccountName: kube-network-policies
       containers:
-      - name: kube-netpol
+      - name: kube-network-policies
         image: aojea/kube-netpol:v0.1.0
         args:
         - /bin/netpol
