@@ -87,7 +87,7 @@ func NewController(client clientset.Interface,
 	podInformer coreinformers.PodInformer,
 	config Config,
 ) *Controller {
-	klog.V(4).Info("Creating event broadcaster")
+	klog.V(2).Info("Creating event broadcaster")
 	broadcaster := record.NewBroadcaster()
 	broadcaster.StartStructuredLogging(0)
 	broadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: client.CoreV1().Events("")})
@@ -299,7 +299,7 @@ func (c *Controller) Run(ctx context.Context) error {
 	// Parse the packet and check if should be accepted
 	fn := func(a nfqueue.Attribute) int {
 		startTime := time.Now()
-		klog.Infof("Processing sync for packet %d", *a.PacketID)
+		klog.V(2).Infof("Processing sync for packet %d", *a.PacketID)
 
 		packet, err := parsePacket(*a.Payload)
 		if err != nil {
@@ -318,7 +318,7 @@ func (c *Controller) Run(ctx context.Context) error {
 		packetProcessingHist.WithLabelValues(string(packet.proto), string(packet.family)).Observe(processingTime)
 		packetProcessingSum.Observe(processingTime)
 		packetCounterVec.WithLabelValues(string(packet.proto), string(packet.family)).Inc()
-		klog.V(0).Infof("Finished syncing packet %d took: %v accepted: %v", *a.PacketID, time.Since(startTime), verdict)
+		klog.V(2).Infof("Finished syncing packet %d took: %v accepted: %v", *a.PacketID, time.Since(startTime), verdict)
 		return 0
 	}
 
