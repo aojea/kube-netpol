@@ -61,13 +61,17 @@ func parsePacket(b []byte) (packet, error) {
 		return t, fmt.Errorf("unknown versions %d", version)
 	}
 
+	var dataOffset int
 	switch protocol {
 	case 6:
 		t.proto = v1.ProtocolTCP
+		dataOffset = int(b[hdrlen+12] >> 4) // data offset
 	case 17:
 		t.proto = v1.ProtocolUDP
+		dataOffset = hdrlen + 8 // data starts after
 	case 132:
 		t.proto = v1.ProtocolSCTP
+		dataOffset = hdrlen + 8
 	default:
 		return t, fmt.Errorf("unknown protocol %d", protocol)
 	}
@@ -76,7 +80,6 @@ func parsePacket(b []byte) (packet, error) {
 	t.dstPort = int(binary.BigEndian.Uint16(b[hdrlen+2 : hdrlen+4]))
 	// Obtain the offset of the payload
 	// TODO allow to filter by the payload
-	dataOffset := int(b[hdrlen+12] >> 4)
 	if len(b) >= hdrlen+dataOffset {
 		t.payload = b[hdrlen+dataOffset:]
 	}
