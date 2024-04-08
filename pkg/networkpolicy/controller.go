@@ -313,7 +313,10 @@ func (c *Controller) Run(ctx context.Context) error {
 		} else {
 			c.nfq.SetVerdict(*a.PacketID, nfqueue.NfDrop)
 		}
-		histogramVec.WithLabelValues(string(packet.proto), string(packet.family)).Observe(float64(time.Since(startTime).Microseconds()))
+
+		processingTime := float64(time.Since(startTime).Microseconds())
+		packetProcessingHist.WithLabelValues(string(packet.proto), string(packet.family)).Observe(processingTime)
+		packetProcessingSum.Observe(processingTime)
 		packetCounterVec.WithLabelValues(string(packet.proto), string(packet.family)).Inc()
 		klog.V(0).Infof("Finished syncing packet %d took: %v accepted: %v", *a.PacketID, time.Since(startTime), verdict)
 		return 0
