@@ -50,6 +50,7 @@ var registerMetricsOnce sync.Once
 // RegisterMetrics registers kube-proxy metrics.
 func registerMetrics(ctx context.Context) {
 	registerMetricsOnce.Do(func() {
+		klog.Infof("Registering metrics")
 		prometheus.Register(histogramVec)
 		prometheus.Register(packetCounterVec)
 		prometheus.Register(nfqueueQueueTotal)
@@ -63,7 +64,9 @@ func registerMetrics(ctx context.Context) {
 				klog.Infof("error reading nfqueue stats: %v", err)
 				return
 			}
+			klog.V(4).Infof("Registering metrics")
 			for _, q := range queues {
+				klog.V(4).Infof("Updating metrics for queue: %d", q.id_sequence)
 				nfqueueQueueTotal.WithLabelValues(q.queue_number).Set(float64(q.queue_total))
 				nfqueueQueueDropped.WithLabelValues(q.queue_number).Set(float64(q.queue_dropped))
 				nfqueueUserDropped.WithLabelValues(q.queue_number).Set(float64(q.user_dropped))
