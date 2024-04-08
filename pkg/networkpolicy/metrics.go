@@ -85,7 +85,6 @@ func readNfnetlinkQueueStats() ([]nfnetlinkQueue, error) {
 	reader := io.LimitReader(f, maxBufferSize)
 
 	scanner := bufio.NewScanner(reader)
-	scanner.Scan()
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
 		if len(fields) != 9 {
