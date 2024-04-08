@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -20,13 +21,15 @@ import (
 )
 
 var (
-	failOpen bool
-	queueID  int
+	failOpen           bool
+	queueID            int
+	metricsBindAddress string
 )
 
 func init() {
 	flag.BoolVar(&failOpen, "fail-open", false, "If set, don't drop packets if the controller is not running (default false)")
 	flag.IntVar(&queueID, "nfqueue-id", 100, "Number of the nfqueue used (default 100)")
+	flag.StringVar(&metricsBindAddress, "metrics-bind-address", ":9080", "The IP address and port for the metrics server to serve on (default :9080)")
 
 	flag.Usage = func() {
 		fmt.Fprint(os.Stderr, "Usage: kube-netpol [options]\n\n")
@@ -39,6 +42,10 @@ func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
 	//
+	if _, _, err := net.SplitHostPort(metricsBindAddress); err != nil {
+		klog.Fatalf("error parsing metrics bind address %s : %v", metricsBindAddress, err)
+	}
+
 	cfg := networkpolicy.Config{
 		FailOpen: failOpen,
 		QueueID:  queueID,
@@ -69,7 +76,7 @@ func main() {
 	informersFactory := informers.NewSharedInformerFactory(clientset, 0)
 
 	http.Handle("/metrics", promhttp.Handler())
-	go http.ListenAndServe(":9080", nil)
+	go http.ListenAndServe(metricsBindAddress, nil)
 
 	networkPolicyController := networkpolicy.NewController(
 		clientset,
