@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/aojea/kube-netpol/pkg/networkpolicy"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -88,4 +89,6 @@ func main() {
 	case <-ctx.Done():
 	}
 
+	// grace period to cleanup resources
+	time.Sleep(5 * time.Second)
 }
