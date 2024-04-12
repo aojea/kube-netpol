@@ -108,3 +108,21 @@ Check the current max number of conntrack entries allowed and tune accordenly
 
 ![Packet Processing Latency](network_policies_latency.png "Packet Processing Latency")
 ![Packet Rate](network_policies_packet_rate.png "Packet Rate")
+
+
+## Future work
+
+We are interested in understanding the following variables
+
+* Memory and CPU consumption
+* Latency on packet processing
+* Latency to apply a network policy since it has been created
+
+This can microbencharked easily, using one Node or a Kind cluster and adding fake nodes and pods https://developer.ibm.com/tutorials/awb-using-kwok-to-simulate-a-large-kubernetes-openshift-cluster/ and running scenarios in just one node with the different variables
+
+
+Inputs:
+
+* New connections per seconds
+* Number of Pods on the cluster (affected or not affected by network policies)
+* Number of Network Policies impacting the connections
