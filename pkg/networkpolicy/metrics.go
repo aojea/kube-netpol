@@ -9,19 +9,27 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 )
 
 var (
-	histogramVec = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name: "packet_process_time",
-		Help: "Time it has taken to process each packet (microseconds)",
+	packetProcessingHist = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "packet_process_time",
+		Help:    "Time it has taken to process each packet (microseconds)",
+		Buckets: []float64{1, 10, 50, 200, 500, 750, 1000, 2000, 5000, 10000, 100000},
 	}, []string{"protocol", "family"})
 
+	packetProcessingSum = prometheus.NewSummary(prometheus.SummaryOpts{
+		Name: "packet_process_duration_microseconds",
+		Help: "A summary of the packet processing durations in microseconds.",
+		Objectives: map[float64]float64{
+			0.5:  0.05,  // 50th percentile with a max. absolute error of 0.05.
+			0.9:  0.01,  // 90th percentile with a max. absolute error of 0.01.
+			0.99: 0.001, // 99th percentile with a max. absolute error of 0.001.
+		},
+	})
 	packetCounterVec = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "packet_count",
 		Help: "Number of packets",
@@ -41,7 +49,7 @@ var (
 	}, []string{"queue"})
 	nfqueuePacketID = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "nfqueue_packet_id",
-		Help: " ID of the most recent packet queued.",
+		Help: "ID of the most recent packet queued.",
 	}, []string{"queue"})
 )
 
@@ -50,27 +58,14 @@ var registerMetricsOnce sync.Once
 // RegisterMetrics registers kube-proxy metrics.
 func registerMetrics(ctx context.Context) {
 	registerMetricsOnce.Do(func() {
-		prometheus.Register(histogramVec)
+		klog.Infof("Registering metrics")
+		prometheus.Register(packetProcessingHist)
+		prometheus.Register(packetProcessingSum)
 		prometheus.Register(packetCounterVec)
 		prometheus.Register(nfqueueQueueTotal)
 		prometheus.Register(nfqueueQueueDropped)
 		prometheus.Register(nfqueueUserDropped)
 		prometheus.Register(nfqueuePacketID)
-		// collect metrics periodically
-		go wait.UntilWithContext(ctx, func(ctx context.Context) {
-			queues, err := readNfnetlinkQueueStats()
-			if err != nil {
-				klog.Infof("error reading nfqueue stats: %v", err)
-				return
-			}
-			for _, q := range queues {
-				nfqueueQueueTotal.WithLabelValues(q.queue_number).Set(float64(q.queue_total))
-				nfqueueQueueDropped.WithLabelValues(q.queue_number).Set(float64(q.queue_dropped))
-				nfqueueUserDropped.WithLabelValues(q.queue_number).Set(float64(q.user_dropped))
-				nfqueuePacketID.WithLabelValues(q.queue_number).Set(float64(q.id_sequence))
-			}
-
-		}, 30*time.Second)
 	})
 }
 
@@ -100,7 +95,6 @@ func readNfnetlinkQueueStats() ([]nfnetlinkQueue, error) {
 	reader := io.LimitReader(f, maxBufferSize)
 
 	scanner := bufio.NewScanner(reader)
-	scanner.Scan()
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
 		if len(fields) != 9 {

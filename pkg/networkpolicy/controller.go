@@ -87,7 +87,7 @@ func NewController(client clientset.Interface,
 	podInformer coreinformers.PodInformer,
 	config Config,
 ) *Controller {
-	klog.V(4).Info("Creating event broadcaster")
+	klog.V(2).Info("Creating event broadcaster")
 	broadcaster := record.NewBroadcaster()
 	broadcaster.StartStructuredLogging(0)
 	broadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: client.CoreV1().Events("")})
@@ -230,6 +230,23 @@ func (c *Controller) Run(ctx context.Context) error {
 
 	// add metrics
 	registerMetrics(ctx)
+	// collect metrics periodically
+	go wait.UntilWithContext(ctx, func(ctx context.Context) {
+		queues, err := readNfnetlinkQueueStats()
+		if err != nil {
+			klog.Infof("error reading nfqueue stats: %v", err)
+			return
+		}
+		klog.V(4).Infof("Obtained metrics for %d queues", len(queues))
+		for _, q := range queues {
+			klog.V(4).Infof("Updating metrics for queue: %d", q.id_sequence)
+			nfqueueQueueTotal.WithLabelValues(q.queue_number).Set(float64(q.queue_total))
+			nfqueueQueueDropped.WithLabelValues(q.queue_number).Set(float64(q.queue_dropped))
+			nfqueueUserDropped.WithLabelValues(q.queue_number).Set(float64(q.user_dropped))
+			nfqueuePacketID.WithLabelValues(q.queue_number).Set(float64(q.id_sequence))
+		}
+
+	}, 30*time.Second)
 
 	if c.ipt != nil {
 		// Start the workers after the repair loop to avoid races
@@ -282,7 +299,7 @@ func (c *Controller) Run(ctx context.Context) error {
 	// Parse the packet and check if should be accepted
 	fn := func(a nfqueue.Attribute) int {
 		startTime := time.Now()
-		klog.Infof("Processing sync for packet %d", *a.PacketID)
+		klog.V(2).Infof("Processing sync for packet %d", *a.PacketID)
 
 		packet, err := parsePacket(*a.Payload)
 		if err != nil {
@@ -296,9 +313,12 @@ func (c *Controller) Run(ctx context.Context) error {
 		} else {
 			c.nfq.SetVerdict(*a.PacketID, nfqueue.NfDrop)
 		}
-		histogramVec.WithLabelValues(string(packet.proto), string(packet.family)).Observe(float64(time.Since(startTime).Microseconds()))
+
+		processingTime := float64(time.Since(startTime).Microseconds())
+		packetProcessingHist.WithLabelValues(string(packet.proto), string(packet.family)).Observe(processingTime)
+		packetProcessingSum.Observe(processingTime)
 		packetCounterVec.WithLabelValues(string(packet.proto), string(packet.family)).Inc()
-		klog.V(0).Infof("Finished syncing packet %d took: %v accepted: %v", *a.PacketID, time.Since(startTime), verdict)
+		klog.V(2).Infof("Finished syncing packet %d took: %v accepted: %v", *a.PacketID, time.Since(startTime), verdict)
 		return 0
 	}
 
