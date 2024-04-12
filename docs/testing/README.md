@@ -95,6 +95,14 @@ Percentage of the requests served within a certain time (ms)
 [1825525.881186] nf_conntrack: nf_conntrack: table full, dropping packet
 ```
 
+Check the current max number of conntrack entries allowed and tune accordenly
+
+```
+ cat /proc/sys/net/netfilter/nf_conntrack_max
+262144
+```
+
+
 4. Observe the metrics in prometheus or graphana
 
 
