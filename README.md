@@ -9,6 +9,12 @@ This project takes a different approach. It uses the NFQUEUE functionality imple
 There are some performance improvements that can be applied, such as to restrict in the dataplane the packets that are sent to userspace to the ones that have network policies only, so only
 the Pods affected by network policies will hit the first byte performance.
 
+## Install
+
+Use the [manifest present in this repo](./install.yaml)
+
+`kubectl apply -f install.yaml`
+
 ## Metrics
 
 Prometheus metrics are exposed on the address defined by the flag
