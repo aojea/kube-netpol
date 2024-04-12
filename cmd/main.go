@@ -27,9 +27,9 @@ var (
 )
 
 func init() {
-	flag.BoolVar(&failOpen, "fail-open", false, "If set, don't drop packets if the controller is not running (default false)")
-	flag.IntVar(&queueID, "nfqueue-id", 100, "Number of the nfqueue used (default 100)")
-	flag.StringVar(&metricsBindAddress, "metrics-bind-address", ":9080", "The IP address and port for the metrics server to serve on (default :9080)")
+	flag.BoolVar(&failOpen, "fail-open", false, "If set, don't drop packets if the controller is not running")
+	flag.IntVar(&queueID, "nfqueue-id", 100, "Number of the nfqueue used")
+	flag.StringVar(&metricsBindAddress, "metrics-bind-address", ":9080", "The IP address and port for the metrics server to serve on")
 
 	flag.Usage = func() {
 		fmt.Fprint(os.Stderr, "Usage: kube-netpol [options]\n\n")
