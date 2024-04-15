@@ -36,7 +36,7 @@ Current implemented metrics are:
 
 ## Testing
 
-See [.docs/testing/README.md] 
+See [docs/testing/](.docs/testing/README.md)
 
 ## References
 
