@@ -1,3 +1,8 @@
+# ARCHIVED
+
+Moved to https://github.com/kubernetes-sigs/kube-network-policies
+
+
 # kube-netpol
 
 Network policies are hard to implement efficiently and in large clusters this is translated to performance and scalability problems.
